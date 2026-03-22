@@ -7,14 +7,15 @@ load_dotenv()
 
 # Secrets from .env
 SNOWFLAKE_OPTIONS = {
-    "sfURL": os.getenv("SNOWFLAKE_ACCOUNT") + ".snowflakecomputing.com",
+    "sfURL": "ar29154.us-central1.gcp.snowflakecomputing.com",
     "sfUser": os.getenv("SNOWFLAKE_USER"),
     "sfPassword": os.getenv("SNOWFLAKE_PASSWORD"),
     # Non-sensitive config hardcoded
-    "sfDatabase": "uci_diabetes",
-    "sfSchema": "raw",
-    "sfWarehouse": "compute_wh",
-    "sfRole": "transformer"
+    "sfDatabase": "UCI_DIABETES",
+    "sfSchema": "RAW",
+    "sfWarehouse": "COMPUTE_WH",
+    "sfRole": "TRANSFORMER",
+    "preactions": "USE DATABASE UCI_DIABETES; USE SCHEMA RAW; USE WAREHOUSE COMPUTE_WH;"
 }
 
 def create_spark_session():
@@ -23,8 +24,8 @@ def create_spark_session():
         .appName("uci_diabetes_ingestion")
         .config(
             "spark.jars.packages",
-            "net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.3,"
-            "net.snowflake:snowflake-jdbc:3.13.30"
+            "net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.4,"
+            "net.snowflake:snowflake-jdbc:3.15.0"
         )
         .getOrCreate()
     )
