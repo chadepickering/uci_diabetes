@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: diabetes_features
+    description: >
+      Final analytical feature mart for UCI diabetes readmission dataset.
+      Deduplicated to one encounter per patient (max time_in_hospital).
+      Filters deceased/hospice discharge dispositions and missing primary diagnosis.
+      Includes engineered features: age midpoint and clinical grouping, ICD-9 disease
+      categories, admission type consolidation, medication summary counts, prior
+      utilization composite, medical specialty grouping, and temporal split assignment.
+      Ready for statistical analysis in R and ML modeling in Python.
+    columns:
+      - name: readmitted_30day
+        description: "Primary binary outcome: 1 if readmitted within 30 days, 0 otherwise"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: split_group
+        description: "Temporal split assignment: train, validation, or holdout"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['train', 'validation', 'holdout']
+      - name: age_midpoint
+        description: "Numeric midpoint of age band for continuous modeling"
+        tests:
+          - not_null
+      - name: total_prior_encounters
+        description: "Sum of outpatient, emergency, and inpatient visits in prior year"
+        tests:
+          - not_null
+      - name: num_med_changes
+        description: "Count of medications with Up or Down adjustment during encounter"
+        tests:
+          - not_null
+      - name: num_meds_active
+        description: "Count of medications that are active (not No) during encounter"
+        tests:
+          - not_null
+      - name: diag_1_group
+        description: "Primary diagnosis mapped to 9 ICD-9 disease categories"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Diabetes','Circulatory','Respiratory','Digestive',
+                         'Genitourinary','Injury','Musculoskeletal','Neoplasms','Other']
+      - name: admission_type_group
+        description: "Consolidated admission type: Emergency, Elective, Newborn, Unknown"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Emergency', 'Elective', 'Newborn', 'Unknown']
