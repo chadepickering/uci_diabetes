@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: raw
+    database: UCI_DIABETES
+    schema: RAW
+    tables:
+      - name: dat
+        description: "Raw UCI 130-US Hospitals Diabetes dataset ingested via PySpark"
+        columns:
+          - name: encounter_id
+            description: "Unique identifier for each encounter"
+          - name: patient_nbr
+            description: "Unique identifier for each patient — multiple encounters possible per patient"
+          - name: readmitted
+            description: "Readmission outcome: <30, >30, or NO"

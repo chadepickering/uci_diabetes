@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: stg_diabetes_admissions
+    description: >
+      Cleaned and standardized staging model for UCI diabetes admissions dataset.
+      Converts '?' placeholders to NULL, retains 'None' as meaningful category
+      in lab test columns, casts columns to appropriate types, and creates
+      binary outcome variables. Deduplication, feature engineering, and
+      column dropping handled in marts layer.
+    columns:
+      - name: encounter_id
+        description: "Unique encounter identifier"
+        tests:
+          - not_null
+          - unique
+      - name: patient_nbr
+        description: "Patient identifier — not unique at encounter level"
+        tests:
+          - not_null
+      - name: readmitted_30day
+        description: "Binary outcome: 1 if readmitted within 30 days, 0 otherwise"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: readmitted_any
+        description: "Binary outcome: 1 if readmitted at any point, 0 if no readmission"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: gender
+        description: "Patient gender — Unknown/Invalid converted to NULL"
+      - name: race
+        description: "Patient race — '?' converted to NULL"
