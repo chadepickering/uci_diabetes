@@ -1,0 +1,17 @@
+# Overview
+
+This report presents the statistical analysis of the UCI 130-US Hospitals 
+Diabetes dataset, covering exploratory data analysis, causal inference, 
+and experimental design. The analytical work in this report directly informs 
+feature engineering decisions and modeling choices in Part 2.
+
+## Dataset
+- **Source:** UCI Machine Learning Repository — Diabetes 130-US Hospitals
+- **Analytic sample:** 69,584 encounters after deduplication and exclusion criteria
+- **Outcome:** 30-day hospital readmission (binary)
+- **Period:** 1999–2008 across 130 US hospitals
+
+## Analytical Components
+1. **Exploratory Data Analysis** — outcome distribution, covariate profiles, missingness
+2. **Causal Inference** — estimating effect of HbA1c testing on readmission
+3. **Experimental Design** — power analysis and experiment design for model deployment

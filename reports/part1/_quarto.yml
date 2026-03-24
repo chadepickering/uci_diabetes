@@ -1,0 +1,22 @@
+project:
+  type: book
+  output-dir: ../../docs/part1
+
+book:
+  title: "UCI Diabetes Readmission — Statistical Analysis"
+  author: "Chad Pickering"
+  chapters:
+    - index.qmd
+    - 01_eda.qmd
+    - 02_causal_inference.qmd
+    - 03_experimental_design.qmd
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+    fig-width: 9
+    fig-height: 6
