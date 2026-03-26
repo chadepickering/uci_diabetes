@@ -25,6 +25,8 @@ library(skimr)
 library(patchwork)
 library(scales)
 library(caret)
+library(corrplot)
+library(vcd)
 
 ```
 
@@ -567,6 +569,7 @@ df_tab |>
 ```
 
 ### HbA1c and Glucose Test Results
+
 ```{r}
 
 #| label: lab-results
@@ -609,5 +612,161 @@ p2 <- df_tab |>
 
 p1 + p2 + plot_layout(guides = "collect") &
   theme(legend.position = "top")
+
+```
+
+## Correlation Structure
+
+### Continuous Variables — Spearman Correlation
+
+```{r}
+
+#| label: correlation-heatmap
+#| fig-height: 8
+#| fig-width: 9
+
+cont_corr_vars <- c(
+  "age_midpoint", "time_in_hospital",
+  "num_lab_procedures", "num_procedures", "num_medications",
+  "number_outpatient", "number_emergency", "number_inpatient",
+  "number_diagnoses", "total_prior_encounters",
+  "num_med_changes", "num_meds_active", "readmitted_30day"
+)
+
+corr_matrix <- df |>
+  select(all_of(cont_corr_vars)) |>
+  mutate(across(everything(), as.numeric)) |>
+  cor(method = "spearman", use = "pairwise.complete.obs")
+
+# Clean up labels
+colnames(corr_matrix) <- colnames(corr_matrix) |>
+  str_replace_all("_", " ") |>
+  str_to_title()
+rownames(corr_matrix) <- rownames(corr_matrix)  |>
+  str_replace_all("_", " ") |>
+  str_to_title()
+
+corrplot(
+  corr_matrix,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  tl.cex = 0.8,
+  tl.col = "black",
+  addCoef.col = "black",
+  number.cex = 0.65,
+  col = colorRampPalette(c("#1d617cff", "white", "#891d11ff"))(200),
+  title = "Spearman Correlation, Continuous Variables",
+  mar = c(0, 0, 2, 0)
+)
+
+```
+
+### Categorical Variables — Cramér's V Association
+
+```{r}
+
+#| label: cramers-v-heatmap
+#| fig-height: 9
+#| fig-width: 9
+
+cat_assoc_vars <- c(
+  "race", "gender", "age_group", "admission_type_group",
+  "specialty_group", "diag_1_group", "diag_2_group", "diag_3_group",
+  "max_glu_serum", "a1cresult", "metformin", "glimepiride",
+  "glipizide", "glyburide", "pioglitazone", "insulin",
+  "change", "diabetes_med", "readmitted_30day"
+)
+
+df_cat <- df |>
+  select(all_of(cat_assoc_vars)) |>
+  mutate(across(everything(), as.character))
+
+# Compute Cramér's V for all pairs
+n_vars <- length(cat_assoc_vars)
+v_matrix <- matrix(NA, n_vars, n_vars,
+                   dimnames = list(cat_assoc_vars, cat_assoc_vars))
+
+for (i in seq_len(n_vars)) {
+  for (j in seq_len(n_vars)) {
+    if (i == j) {
+      v_matrix[i, j] <- 1
+    } else {
+      tbl <- table(df_cat[[i]], df_cat[[j]])
+      v_matrix[i, j] <- assocstats(tbl)$cramer
+    }
+  }
+}
+
+# Clean labels
+clean_labels <- cat_assoc_vars |>
+  str_replace_all("_", " ") |>
+  str_to_title()
+colnames(v_matrix) <- clean_labels
+rownames(v_matrix) <- clean_labels
+
+corrplot(
+  v_matrix,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  tl.cex = 0.7,
+  tl.col = "black",
+  addCoef.col = "black",
+  number.cex = 0.45,
+  col = colorRampPalette(c("white", "#891d11ff"))(200),
+  is.corr = FALSE,
+  title = "Cramér's V Association Matrix, Categorical Variables",
+  mar = c(0, 0, 2, 0)
+)
+
+```
+
+## Split Group Balance
+
+```{r}
+
+#| label: split-balance-table
+
+tab2 <- CreateTableOne(
+  vars = c(cat_vars, cont_vars),
+  strata = "split_group",
+  data = df_tab,
+  factorVars = cat_vars,
+  addOverall = TRUE
+)
+
+tab2_df <- print(
+  tab2,
+  showAllLevels = FALSE,
+  nonnormal = cont_vars,
+  quote = FALSE,
+  noSpaces = TRUE,
+  printToggle = FALSE
+)
+
+# Identify header rows (not indented with 3 spaces)
+header_rows <- which(!grepl("^   ", rownames(tab2_df)))
+
+# Restore indentation in row names before passing to kable
+rownames(tab2_df) <- ifelse(
+  grepl("^   ", rownames(tab2_df)),
+  paste0("\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0", trimws(rownames(tab2_df))),
+  rownames(tab2_df)
+)
+
+tab2_df |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    caption = "Table 2: Patient Characteristics Stratified by Temporal Split Group"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 12,
+    full_width = TRUE
+  ) |>
+  row_spec(header_rows, extra_css = "border-top: 2px solid #929393ff;") |>
+  scroll_box(height = "800px")
 
 ```
