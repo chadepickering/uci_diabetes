@@ -389,3 +389,225 @@ df |>
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 
 ```
+
+## Continuous Variable Distributions
+```{r}
+
+#| label: continuous-distributions
+#| fig-height: 10
+
+cont_plot_vars <- c(
+  "time_in_hospital", "num_lab_procedures", "num_procedures",
+  "num_medications", "number_diagnoses", "total_prior_encounters",
+  "num_med_changes", "num_meds_active", "age_midpoint"
+)
+
+df_tab |>
+  select(all_of(cont_plot_vars), readmitted_30day) |>
+  pivot_longer(
+    cols = all_of(cont_plot_vars),
+    names_to = "variable",
+    values_to = "value"
+  ) |>
+  mutate(variable = str_replace_all(variable, "_", " ") |> str_to_title()) |>
+  ggplot(aes(x = value, fill = readmitted_30day)) +
+  geom_histogram(bins = 30, alpha = 0.7, position = "identity") +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  labs(
+    title = "Continuous Variable Distributions by Readmission Status",
+    x = NULL,
+    y = "Count",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+
+```
+
+## Categorical Variable Profiles
+
+### Age Distribution
+```{r}
+
+#| label: age-distribution
+
+df_tab |>
+  count(age_band, readmitted_30day) |>
+  group_by(age_band) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = age_band, y = n, fill = readmitted_30day)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, size = 3
+  ) +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Age Band Distribution by Readmission Status",
+    x = "Age Band",
+    y = "Count",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+
+```
+
+### Primary Diagnosis Group
+```{r}
+
+#| label: diag1-distribution
+
+df_tab |>
+  count(diag_1_group, readmitted_30day) |>
+  group_by(diag_1_group) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = reorder(diag_1_group, n), y = n, fill = readmitted_30day)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    position = position_dodge(width = 0.9),
+    hjust = -0.1, size = 3
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Primary Diagnosis Group by Readmission Status",
+    x = NULL,
+    y = "Count",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+
+```
+
+### Admission Type
+```{r}
+
+#| label: admission-type-distribution
+
+df_tab |>
+  count(admission_type_group, readmitted_30day) |>
+  group_by(admission_type_group) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = admission_type_group, y = n, fill = readmitted_30day)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, size = 3
+  ) +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Admission Type by Readmission Status",
+    x = NULL,
+    y = "Count",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+
+```
+
+### Medication Utilization Profile
+```{r}
+
+#| label: medication-profile
+#| fig-height: 8
+
+med_vars <- c(
+  "metformin", "repaglinide", "nateglinide", "glimepiride",
+  "glipizide", "glyburide", "pioglitazone", "rosiglitazone",
+  "insulin", "change", "diabetes_med"
+)
+
+df_tab |>
+  select(all_of(med_vars)) |>
+  pivot_longer(everything(), names_to = "medication", values_to = "status") |>
+  filter(status != "No") |>
+  count(medication, status) |>
+  mutate(
+    medication = str_replace_all(medication, "_", " ") |> str_to_title(),
+    status = factor(status, levels = c("Steady", "Up", "Down", "Yes", "Ch"))
+  ) |>
+  group_by(medication) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = reorder(medication, n), y = n, fill = status)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    position = position_dodge(width = 0.9),
+    hjust = -0.15, size = 3
+  ) +
+  coord_flip() +
+  scale_y_continuous(labels = comma) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Medication Utilization Profile",
+    subtitle = "Encounters where medication was active (excluding No)",
+    x = NULL,
+    y = "Number of Encounters",
+    fill = "Status"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 13))
+
+```
+
+### HbA1c and Glucose Test Results
+```{r}
+
+#| label: lab-results
+
+p1 <- df_tab |>
+  count(a1cresult, readmitted_30day) |>
+  group_by(a1cresult) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = a1cresult, y = n, fill = readmitted_30day)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, size = 3
+  ) +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "HbA1c Result", x = NULL, y = "Count", fill = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+
+p2 <- df_tab |>
+  count(max_glu_serum, readmitted_30day) |>
+  group_by(max_glu_serum) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = max_glu_serum, y = n, fill = readmitted_30day)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = percent(pct, accuracy = 0.1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.3, size = 3
+  ) +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Max Glucose Serum", x = NULL, y = "Count", fill = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+
+p1 + p2 + plot_layout(guides = "collect") &
+  theme(legend.position = "top")
+
+```
