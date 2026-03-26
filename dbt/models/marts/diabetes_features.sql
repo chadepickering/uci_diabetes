@@ -151,6 +151,7 @@ featured AS (
         END                                                         AS diag_1_group,
 
         CASE
+            WHEN diag_2 IS NULL                                   THEN 'None'
             WHEN diag_2 LIKE '250%'                               THEN 'Diabetes'
             WHEN TRY_CAST(diag_2 AS FLOAT) BETWEEN 390 AND 459
                 OR diag_2 = '785'                                 THEN 'Circulatory'
@@ -167,6 +168,7 @@ featured AS (
         END                                                         AS diag_2_group,
 
         CASE
+            WHEN diag_3 IS NULL                                   THEN 'None'
             WHEN diag_3 LIKE '250%'                               THEN 'Diabetes'
             WHEN TRY_CAST(diag_3 AS FLOAT) BETWEEN 390 AND 459
                 OR diag_3 = '785'                                 THEN 'Circulatory'

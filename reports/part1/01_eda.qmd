@@ -1,0 +1,391 @@
+---
+title: "Exploratory Data Analysis"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+    fig-width: 9
+    fig-height: 6
+---
+
+```{r}
+
+#| label: setup
+#| include: false
+
+options(java.parameters = "--add-opens=java.base/java.nio=ALL-UNNAMED")
+source("/Users/cepickering/Documents/Large Folders/Git/uci_diabetes/reports/part1/R/connections.R")
+
+library(tableone)
+library(kableExtra)
+library(naniar)
+library(skimr)
+library(patchwork)
+library(scales)
+library(caret)
+
+```
+
+## Overview
+
+This section presents an exploratory analysis of the UCI 130-US Hospitals 
+Diabetes dataset following preprocessing and feature engineering in dbt. 
+The analytic sample consists of **69,584 encounters** after deduplication 
+to one encounter per patient, removal of deceased and hospice discharge 
+dispositions, neonatal admissions, and encounters with missing primary diagnosis.
+The primary outcome is **30-day hospital readmission** (binary).
+
+## Outcome Distribution and Class Imbalance
+
+```{r}
+
+#| label: outcome-distribution
+
+outcome_counts <- df |>
+  count(readmitted_30day) |>
+  mutate(
+    label = ifelse(readmitted_30day == 1, "Readmitted <30 days", "Not readmitted"),
+    pct = n / sum(n),
+    pct_label = paste0(label, "\n", comma(n), " (", percent(pct, accuracy = 0.1), ")")
+  )
+
+ggplot(outcome_counts, aes(x = label, y = n, fill = factor(readmitted_30day))) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = paste0(comma(n), "\n(", percent(pct, accuracy = 0.1), ")")),
+            vjust = -0.3, size = 4) +
+  scale_fill_manual(values = c("#4E9BB9", "#C0392B")) +
+  scale_y_continuous(labels = comma, limits = c(0, max(outcome_counts$n) * 1.15)) +
+  labs(
+    title = "30-Day Readmission Outcome Distribution",
+    subtitle = paste0("Positive class rate: ",
+                      percent(mean(df$readmitted_30day == 1), accuracy = 0.1)),
+    x = NULL,
+    y = "Number of Encounters"
+  ) +
+  theme_classic() +
+  theme(
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 10)
+  )
+
+```
+
+## Missingness Profile
+
+```{r}
+
+#| label: missingness-table
+
+miss_summary <- df |>
+  summarise(across(everything(), ~ sum(is.na(.)))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "n_missing") |>
+  filter(n_missing > 0) |>
+  mutate(pct_missing = percent(n_missing / nrow(df), accuracy = 0.01)) |>
+  arrange(desc(n_missing))
+
+miss_summary |>
+  kable(
+    col.names = c("Variable", "N", "%"),
+    caption = "Variables with Missing Values"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+```
+
+```{r}
+
+df |>
+  miss_var_summary() |>
+  filter(n_miss > 0) |>
+  ggplot(aes(x = reorder(variable, pct_miss), y = pct_miss)) +
+  geom_col(fill = "#4E9BB9") +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(scale = 1)) +
+  labs(
+    title = "Missingness by Variable",
+    subtitle = "Variables with at least one missing value",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13)
+  )
+
+```
+
+```{r}
+
+missingness_decisions <- tibble::tibble(
+  variable = c("medical_specialty", "race", "diag_3", "diag_2", "gender"),
+  pct_missing = c("48.12%", "2.69%", "1.64%", "0.41%", "0.00%"),
+  mechanism = c(
+    "High missingness — likely MNAR (not documented for certain specialties)",
+    "Likely MCAR — small, no clear pattern",
+    "Structural — not all admissions have tertiary diagnosis",
+    "Structural — not all admissions have secondary diagnosis",
+    "Negligible — 3 records, likely data entry error"
+  ),
+  decision = c(
+    "Retain 'Unknown' as explicit category — already handled in specialty_group",
+    "Mode imputation; may want a more robust approach in Part 2 preprocessing",
+    "Already handled — NULL maps to 'None' in diag_3_group",
+    "Already handled — NULL maps to 'None' in diag_2_group",
+    "Drop 3 records in Part 2 preprocessing — negligible loss"
+  )
+)
+
+missingness_decisions |>
+  kable(
+    col.names = c("Variable", "% Missing", "Mechanism", "Handling Decision"),
+    caption = "Missingness Assessment and Handling Decisions"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+```
+
+## Table 1
+
+```{r}
+
+#| label: table-one
+
+# Verify column names match exactly
+# names(df)  # uncomment to inspect if needed
+
+# Define variable lists — all lowercase per janitor::clean_names()
+cat_vars <- c(
+  "race", "gender", "age_band", "age_group",
+  "admission_type_group", "specialty_group",
+  "diag_1_group", "diag_2_group", "diag_3_group",
+  "max_glu_serum", "a1cresult",
+  "metformin", "repaglinide", "nateglinide", "chlorpropamide",
+  "glimepiride", "glipizide", "glyburide", "tolbutamide",
+  "pioglitazone", "rosiglitazone", "acarbose", "miglitol",
+  "tolazamide", "insulin", "glyburide_metformin",
+  "glipizide_metformin", "glimepiride_pioglitazone",
+  "metformin_rosiglitazone", "metformin_pioglitazone",
+  "change", "diabetes_med",
+  "readmitted_raw", "split_group"
+)
+
+cont_vars <- c(
+  "age_midpoint", "time_in_hospital",
+  "num_lab_procedures", "num_procedures", "num_medications",
+  "number_outpatient", "number_emergency", "number_inpatient",
+  "number_diagnoses", "total_prior_encounters",
+  "num_med_changes", "num_meds_active"
+)
+
+# Prepare data — factor the strata variable with labels
+df_tab <- df |>
+  mutate(
+    readmitted_30day = factor(
+      readmitted_30day,
+      levels = c(0, 1),
+      labels = c("Not Readmitted", "Readm <30d")
+    ),
+    # Cast continuous vars explicitly
+    across(all_of(cont_vars), as.numeric),
+    # Factor ordering for key categoricals
+    age_group = factor(age_group, levels = c("young", "middle", "senior")),
+    age_band = factor(age_band, levels = c(
+      "[0-10)", "[10-20)", "[20-30)", "[30-40)", "[40-50)",
+      "[50-60)", "[60-70)", "[70-80)", "[80-90)", "[90-100)"
+    )),
+    admission_type_group = factor(admission_type_group,
+      levels = c("Emergency", "Elective", "Newborn", "Unknown")),
+    readmitted_raw = factor(readmitted_raw,
+      levels = c("NO", ">30", "<30")),
+    split_group = factor(split_group,
+      levels = c("train", "validation", "holdout")),
+    # Medication columns — logical ordering
+    across(all_of(c(
+      "metformin", "repaglinide", "nateglinide", "chlorpropamide",
+      "glimepiride", "glipizide", "glyburide", "tolbutamide",
+      "pioglitazone", "rosiglitazone", "acarbose", "miglitol",
+      "tolazamide", "insulin", "glyburide_metformin",
+      "glipizide_metformin", "glimepiride_pioglitazone",
+      "metformin_rosiglitazone", "metformin_pioglitazone",
+      "change", "diabetes_med"
+    )), ~ factor(., levels = c("No", "Steady", "Up", "Down"))),
+    # Diag groups — alphabetical is fine, Diabetes first makes clinical sense
+    diag_1_group = factor(diag_1_group, levels = c(
+      "Diabetes", "Circulatory", "Respiratory", "Digestive",
+      "Genitourinary", "Injury", "Musculoskeletal", "Neoplasms", "Other"
+    )),
+    diag_2_group = factor(diag_2_group, levels = c(
+      "None", "Diabetes", "Circulatory", "Respiratory", "Digestive",
+      "Genitourinary", "Injury", "Musculoskeletal", "Neoplasms", "Other"
+    )),
+    diag_3_group = factor(diag_3_group, levels = c(
+      "None", "Diabetes", "Circulatory", "Respiratory", "Digestive",
+      "Genitourinary", "Injury", "Musculoskeletal", "Neoplasms", "Other"
+    )),
+    max_glu_serum = factor(max_glu_serum,
+      levels = c("None", "Norm", ">200", ">300")),
+    a1cresult = factor(a1cresult,
+      levels = c("None", "Norm", ">7", ">8")),
+    race = factor(race, levels = c(
+      "Caucasian", "AfricanAmerican", "Hispanic", "Asian", "Other"
+    )),
+    gender = factor(gender, levels = c("Male", "Female"))
+  )
+
+```
+
+```{r}
+
+#| label: table-one-render
+#| 
+# Create Table 1 using tableone
+tab1 <- CreateTableOne(
+  vars = c(cat_vars, cont_vars),
+  strata = "readmitted_30day",
+  data = df_tab,
+  factorVars = cat_vars,
+  addOverall = TRUE
+)
+
+tab1_df <- print(
+  tab1,
+  showAllLevels = FALSE,
+  nonnormal = cont_vars,
+  quote = FALSE,
+  noSpaces = TRUE,
+  printToggle = FALSE
+)
+
+# Identify header rows (not indented with 3 spaces)
+header_rows <- which(!grepl("^   ", rownames(tab1_df)))
+
+# Restore indentation in row names before passing to kable
+rownames(tab1_df) <- ifelse(
+  grepl("^   ", rownames(tab1_df)),
+  paste0("\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0", trimws(rownames(tab1_df))),
+  rownames(tab1_df)
+)
+
+tab1_df |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    caption = "Table 1: Patient Characteristics Stratified by 30-Day Readmission"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    font_size = 12,
+    full_width = TRUE
+  ) |>
+  row_spec(header_rows, extra_css = "border-top: 2px solid #929393ff;") |>
+  scroll_box(height = "800px")
+
+```
+
+## Near-zero variance flagging
+
+Seven variables have zero variance and therefore carry no information. Another six variables 
+have >95% of values in a single category, which may cause modeling issues and should be considered 
+for removal or re-categorization. The table below summarizes these near-zero variance variables.
+Repaglinide and max_glu_serum may be retained for modeling, but the others should not be. We will reassess later.
+
+```{r}
+
+#| label: near-zero-variance
+
+nzv_results <- df |>
+  select(all_of(cat_vars)) |>
+  mutate(across(everything(), as.character)) |>
+  summarise(across(everything(), ~ {
+    tbl <- table(.)
+    max(tbl) / sum(tbl)
+  })) |>
+  pivot_longer(everything(), 
+               names_to = "variable", 
+               values_to = "dominant_pct") |>
+  filter(dominant_pct > 0.95) |>
+  arrange(desc(dominant_pct)) |>
+  mutate(dominant_pct = percent(dominant_pct, accuracy = 0.1))
+
+nzv_results |>
+  kable(
+    col.names = c("Variable", "Dominant Category %"),
+    caption = "Near-Zero Variance Variables (>95% in single category)"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+```
+
+```{r}
+
+#| label: nzv-drop-decisions
+
+vars_to_drop <- c(
+  "glimepiride_pioglitazone",
+  "metformin_pioglitazone", 
+  "metformin_rosiglitazone",
+  "glipizide_metformin",
+  "tolbutamide",
+  "miglitol",
+  "tolazamide",
+  "chlorpropamide",
+  "acarbose",
+  "glyburide_metformin",
+  "nateglinide"
+)
+
+# Document retention decisions
+retention_notes <- tibble::tibble(
+  variable = c("repaglinide", "max_glu_serum"),
+  dominant_pct = c("98.6%", "95.2%"),
+  decision = c("Retain — reassess in Part 2",
+               "Retain — 'None' is clinically meaningful (test not administered)")
+)
+
+retention_notes |>
+  kable(
+    col.names = c("Variable", "Dominant Category %", "Decision"),
+    caption = "Near-Zero Variance Variables Retained with Justification"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+```
+
+## Readmission rate drift across split groups
+
+The 30-day readmission rate declines slightly from training (7.1%) to validation and holdout (5.6%), 
+consistent with temporal trends in hospital readmission rates over the study period (1999–2008). 
+This outcome rate heterogeneity across splits suggests model calibration should be evaluated 
+alongside discrimination metrics in Part 2, and that threshold selection should be performed 
+on the validation set rather than assumed from training data.
+
+```{r}
+
+#| label: outcome-by-split
+
+df |>
+  group_by(split_group) |>
+  summarise(
+    n = n(),
+    n_readmitted = sum(readmitted_30day),
+    readmission_rate = mean(readmitted_30day)
+  ) |>
+  mutate(
+    split_group = factor(split_group, levels = c("train", "validation", "holdout")),
+    readmission_rate = percent(readmission_rate, accuracy = 0.1)
+  ) |>
+  arrange(split_group) |>
+  kable(
+    col.names = c("Split Group", "N", "Readmitted <30 days", "Readm Rate"),
+    caption = "Readmission Rate by Temporal Split Group"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+```

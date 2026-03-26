@@ -49,6 +49,24 @@ models:
               arguments:
                 values: ['Diabetes','Circulatory','Respiratory','Digestive',
                          'Genitourinary','Injury','Musculoskeletal','Neoplasms','Other']
+      - name: diag_2_group
+        description: "Secondary diagnosis mapped to ICD-9 disease categories — None if no secondary diagnosis"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Diabetes','Circulatory','Respiratory','Digestive',
+                         'Genitourinary','Injury','Musculoskeletal','Neoplasms',
+                         'Other','None']
+      - name: diag_3_group
+        description: "Tertiary diagnosis mapped to ICD-9 disease categories — None if no tertiary diagnosis"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Diabetes','Circulatory','Respiratory','Digestive',
+                         'Genitourinary','Injury','Musculoskeletal','Neoplasms',
+                         'Other','None']
       - name: admission_type_group
         description: "Consolidated admission type: Emergency, Elective, Newborn, Unknown"
         tests:

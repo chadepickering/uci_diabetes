@@ -11,6 +11,10 @@ book:
     - 02_causal_inference.qmd
     - 03_experimental_design.qmd
 
+execute:
+  warning: false
+  message: false
+  
 format:
   html:
     theme: cosmo
