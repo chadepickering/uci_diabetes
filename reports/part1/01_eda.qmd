@@ -770,3 +770,51 @@ tab2_df |>
   scroll_box(height = "800px")
 
 ```
+
+## Key Findings and Modeling Implications
+
+```{r}
+
+#| label: key-findings
+#| include: false
+
+# Summary statistics for narrative
+readmission_rate <- mean(df$readmitted_30day) |> scales::percent(accuracy = 0.1)
+n_total <- nrow(df) |> scales::comma()
+
+```
+
+The analytic sample of `r n_total` encounters exhibits a **`r readmission_rate` 
+30-day readmission rate**, representing meaningful class imbalance that will 
+require explicit handling in Part 2 via class weighting and/or threshold tuning. 
+The positive class rate declines modestly from training (7.1%) to validation 
+and holdout (5.6%), consistent with temporal trends in hospital readmission 
+rates over the study period. Model calibration should be evaluated alongside 
+discrimination metrics and threshold selection performed on the validation set.
+
+**Missingness** is largely resolved at the feature engineering stage. Medical 
+specialty (48.1% missing) is handled via the `specialty_group` consolidation. 
+Race (2.7% missing) will likely receive mode imputation in Part 2. Secondary and 
+tertiary diagnosis missingness maps to explicit "None" categories. Three 
+records with missing gender will be dropped.
+
+**Eleven near-zero variance medication variables** will be dropped in Part 2 
+preprocessing: `glimepiride_pioglitazone`, `metformin_pioglitazone`, 
+`metformin_rosiglitazone`, `glipizide_metformin`, `tolbutamide`, `miglitol`, 
+`tolazamide`, `chlorpropamide`, `acarbose`, `glyburide_metformin`, and 
+`nateglinide`. `repaglinide` is retained provisionally pending further 
+assessment. `max_glu_serum` is retained despite 95.2% "None" dominance as 
+test presence carries clinical meaning.
+
+**Correlation analysis** reveals expected relationships among utilization 
+variables (`number_inpatient`, `number_emergency`, `total_prior_encounters`) 
+and moderate associations between medication variables and `diabetes_med`. 
+The Cramer's V matrix confirms that diagnosis groups, admission type, and 
+insulin status show the strongest associations with readmission among 
+categorical variables.
+
+**Split group balance** is broadly maintained across train, validation, and 
+holdout sets for demographic and clinical covariates, supporting the 
+encounter_id-based temporal split as a reasonable proxy for chronological 
+ordering. The outcome rate heterogeneity noted above is the primary 
+imbalance of concern and is documented for handling in Part 2.
