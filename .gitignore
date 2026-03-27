@@ -214,6 +214,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-data/
-drivers/*.jar
-docs/
+/data/
+/drivers/*.jar
+/docs/
