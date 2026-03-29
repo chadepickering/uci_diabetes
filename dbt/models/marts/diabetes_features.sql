@@ -48,6 +48,7 @@ filtered AS (
     WHERE discharge_disposition_id NOT IN (11, 13, 14, 19, 20, 21, 12, 10)
     AND admission_source_id NOT IN (11, 12, 13, 14, 23, 24)
     AND diag_1 IS NOT NULL
+    AND gender IS NOT NULL
 ),
 
 -- Step 3: Feature engineering
@@ -59,7 +60,8 @@ featured AS (
         readmitted_any,
 
         -- Demographics
-        race,
+        -- race: mode imputation for missing values (most common category: Caucasian)
+        COALESCE(race, 'Caucasian')                                 AS race,
         gender,
 
         -- Age: raw band, numeric midpoint, and clinical grouping

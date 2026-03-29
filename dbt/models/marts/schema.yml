@@ -29,6 +29,14 @@ models:
         description: "Numeric midpoint of age band for continuous modeling"
         tests:
           - not_null
+      - name: race
+        description: "Patient race — missing values imputed with mode (Caucasian)"
+        tests:
+          - not_null
+      - name: gender
+        description: "Patient gender — 3 records with missing gender excluded"
+        tests:
+          - not_null
       - name: total_prior_encounters
         description: "Sum of outpatient, emergency, and inpatient visits in prior year"
         tests:
