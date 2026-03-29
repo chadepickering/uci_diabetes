@@ -33,6 +33,7 @@ library(kableExtra)
 library(patchwork)
 library(scales)
 library(pwr)
+library(gsDesign)
 
 ```
 
@@ -520,3 +521,151 @@ single-site RCT. Three practical alternatives merit consideration:
 The power curves illustrate that moving from ARR=3pp to ARR=4pp 
 meaningfully reduces sample size while remaining within the range of 
 effects reported in published transitional care literature.
+
+## Section 3: Group Sequential Design with Interim Analyses
+
+### Motivation
+
+A fixed-sample RCT requiring 4 years of enrollment at a single site carries 
+substantial operational risk — if the true effect is larger than the MDE, 
+the trial runs longer than necessary. A **group sequential design** addresses 
+this by pre-specifying interim analyses at which the trial may stop early for 
+efficacy or futility, while controlling the overall Type I error rate.
+
+### Design Parameters
+
+We specify a group sequential design with:
+
+- **4 analyses**: 3 interim analyses and 1 final analysis, 
+  corresponding to one interim analysis per year of enrollment
+
+- **O'Brien-Fleming spending function**: conservative early stopping boundaries 
+  that preserve most alpha for the final analysis
+
+- **Primary scenario**: ARR = 3pp, baseline = 11.2%, alpha = 0.05, power = 80%
+
+- **Two-sided test** with symmetric boundaries
+
+```{r}
+
+#| label: gs-design
+
+# Group sequential design
+gs <- gsDesign(
+  k = 4,                    # 4 analyses (3 interim + 1 final)
+  test.type = 2,            # two-sided symmetric
+  alpha = 0.05,
+  beta = 0.20,              # 1 - power = 0.20 for 80% power
+  sfu = sfLDOF,             # O'Brien-Fleming spending function
+  delta1 = 0.03 / 0.112,   # effect size as proportion of control rate
+  n.fix = 1524 * 2          # fixed sample size from power analysis
+)
+
+# Display design summary
+print(gs)
+
+```
+
+### Stopping Boundaries
+
+```{r fig.height=7}
+
+#| label: gs-boundaries
+
+plot(gs, 
+     plottype = 1,
+     main = "O'Brien-Fleming Stopping Boundaries",
+     xlab = "Analysis",
+     ylab = "Z Statistic")
+
+```
+
+### Sample Size and Timing
+
+```{r}
+
+#| label: gs-timing
+
+# Extract design parameters
+timing <- gs$timing
+n_analyses <- gs$n.I
+
+tibble::tibble(
+  Analysis = c("Interim 1", "Interim 2", "Interim 3", "Final"),
+  Information_Fraction = round(timing, 3),
+  N_per_arm = ceiling(n_analyses / 2),
+  N_total = ceiling(n_analyses),
+  Efficacy_Z = round(gs$upper$bound, 3),
+  Futility_Z = round(gs$lower$bound, 3),
+  Efficacy_p = round(2 * pnorm(-abs(gs$upper$bound)), 4)
+) |>
+  kable(
+    col.names = c("Analysis", "Information Fraction", 
+                  "N per Arm", "Total N",
+                  "Efficacy Boundary (Z)", 
+                  "Futility Boundary (Z)",
+                  "Efficacy Boundary (p)"),
+    caption = "Group Sequential Design: Stopping Boundaries and Sample Sizes"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
+
+### Comparison: Fixed vs Sequential Design
+
+```{r}
+
+#| label: fixed-vs-sequential
+
+tibble::tibble(
+  Design = c("Fixed Sample", "Group Sequential (O'Brien-Fleming)"),
+  N_per_arm = c(1524, ceiling(max(gs$n.I) / 2)),
+  N_total = c(3048, ceiling(max(gs$n.I))),
+  N_interim_looks = c(0, 3),
+  Alpha_spent_interim = c("N/A", 
+    paste0(percent(sum(gs$upper$spend[1:3]), accuracy = 0.01))),
+  Expected_N_under_H1 = c(3048, 
+    ceiling(gs$en[2]))
+) |>
+  mutate(
+    N_per_arm = comma(N_per_arm),
+    N_total = comma(N_total),
+    Expected_N_under_H1 = comma(Expected_N_under_H1)
+  ) |>
+  kable(
+    col.names = c("Design", "Max N per Arm", "Max Total N", 
+                  "Interim Looks", "Alpha Spent at Interims",
+                  "Expected N if H1 True"),
+    caption = "Fixed Sample vs Group Sequential Design Comparison"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
+
+### Interpretation
+
+The group sequential design offers two key advantages over the fixed sample 
+approach:
+
+**Early stopping for efficacy:** If the intervention effect is substantially 
+larger than the 3pp MDE, the trial can stop at Interim 1, 2, or 3, 
+reducing expected enrollment duration. Under the alternative hypothesis, 
+the expected sample size is smaller than the fixed sample maximum:
+2,505 vs fixed sample 3,048 — the sequential design saves ~540 patients in expectation when the alternative is true.
+
+**Controlled Type I error:** The O'Brien-Fleming spending function allocates 
+very little alpha to early interim analyses — the first interim boundary 
+is conservative, preserving most of the alpha budget for the final analysis. 
+This means the trial will not stop early unless the evidence is overwhelming, 
+reducing the risk of false positives from repeated testing.
+
+**Practical implication for the deployment trial:** The group sequential 
+design is strongly preferred over a fixed sample design given the 4-year 
+enrollment horizon. Even modest early stopping at Interim 2 or 3 would 
+meaningfully reduce operational burden and time to clinical impact.
