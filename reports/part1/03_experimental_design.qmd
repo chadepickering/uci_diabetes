@@ -1,0 +1,522 @@
+---
+title: "Experimental Design"
+execute:
+  warning: false
+  message: false
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+---
+
+```{r}
+
+#| label: setup
+#| include: false
+
+options(java.parameters = "--add-opens=java.base/java.nio=ALL-UNNAMED")
+source("/Users/cepickering/Documents/Large Folders/Git/uci_diabetes/reports/part1/R/connections.R")
+
+# Set figure defaults at runtime — overrides project-level YAML
+# Note: per-chunk fig size overrides must use inline syntax {r fig.height=X}
+# NOT hashpipe #| fig.height: X — Quarto book projects ignore hashpipe overrides
+knitr::opts_chunk$set(
+  fig.width = 9,
+  fig.height = 6,
+  fig.align = "center",
+  out.width = "100%"
+)
+
+library(kableExtra)
+library(patchwork)
+library(scales)
+library(pwr)
+
+```
+
+## Overview
+
+This document designs a prospective randomized controlled trial (RCT) to evaluate 
+whether deploying the readmission risk prediction model developed in Part 2 
+as a clinical decision support tool reduces 30-day hospital readmission 
+rates among diabetic inpatients. The experimental design draws directly on 
+empirical estimates from the EDA and causal inference analyses to ground 
+power calculations and stopping rules in realistic assumptions.
+
+---
+
+## Section 1: Framing the Experiment
+
+### Clinical Deployment Scenario
+
+The readmission risk model developed in Part 2 generates a predicted 
+probability of 30-day readmission for each diabetic inpatient at the time 
+of discharge planning. In clinical deployment, this score would be surfaced 
+to the care team via the electronic health record (EHR) at discharge. 
+
+However, a risk score alone does not reduce readmissions — the mechanism 
+of action requires an **actionable intervention bundle** triggered by the 
+score. Patients whose predicted probability exceeds a **pre-specified threshold** 
+$\tau$ are flagged as high-risk and receive the following interventions:
+
+```{r}
+
+#| label: intervention-bundle
+
+tibble::tibble(
+  Intervention = c(
+    "Enhanced discharge planning",
+    "Expedited follow-up appointment",
+    "Transitional care program enrollment",
+    "Pharmacist medication reconciliation",
+    "Targeted care gap closure"
+  ),
+  Description = c(
+    "Social work consultation, patient education, and post-discharge support coordination",
+    "7-day post-discharge visit scheduled prior to discharge (vs. standard 30-day)",
+    "Nurse navigator assigned; structured post-discharge phone calls at days 3, 7, and 14",
+    "Full medication review and reconciliation before discharge order is signed",
+    "Flagging unordered HbA1c, uninitiated insulin adjustment, or unaddressed comorbidities"
+  )
+) |>
+  kable(caption = "Intervention Bundle Triggered by High-Risk Flag") |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
+
+This deployment model is consistent with established clinical decision support 
+frameworks such as the LACE index and Epic's readmission risk score, both of 
+which trigger care coordinator workflows for flagged patients.
+
+### Estimand and Trial Design
+
+The experiment is not a naive full-population RCT. Because the intervention 
+is only applied to patients flagged above threshold $\tau$, the trial is an 
+**enriched population RCT** — randomization occurs within the flagged 
+sub-population only. Patients below threshold receive standard care regardless 
+of treatment arm assignment.
+
+The primary estimand is the **Average Treatment Effect among the Treated (ATT)** — 
+the effect of the intervention bundle among patients who would be 
+flagged by the model:
+
+$$ATT = E[Y(1) - Y(0) \mid \hat{p} \geq \tau]$$
+
+Where:
+
+- $Y(1)$ = potential outcome under intervention bundle
+
+- $Y(0)$ = potential outcome under standard care  
+
+- $\hat{p}$ = predicted readmission probability from Part 2 model
+
+- $\tau$ = decision threshold (to be specified)
+
+### Threshold Selection and Its Implications
+
+The choice of $\tau$ is a critical design parameter that directly determines:
+
+- The **prevalence of high-risk flags** — what proportion of patients are enrolled
+
+- The **baseline readmission rate** in the trial population — higher $\tau$ means higher-risk enrolled patients
+
+- The **statistical power** — higher baseline risk means larger absolute effect sizes for a given relative reduction
+
+```{r}
+
+#| label: threshold-implications
+
+# Use holdout set to simulate threshold-based enrollment
+df_holdout <- df |>
+  dplyr::filter(split_group == "holdout") |>
+  mutate(
+    # Simulate predicted probabilities using empirical readmission rate
+    # In practice these would come from the Part 2 model
+    # Here we use a logistic model on key predictors as a placeholder
+    readmitted_30day = as.numeric(readmitted_30day),
+    number_inpatient = as.numeric(number_inpatient),
+    num_medications = as.numeric(num_medications),
+    number_diagnoses = as.numeric(number_diagnoses),
+    time_in_hospital = as.numeric(time_in_hospital),
+    age_midpoint = as.numeric(age_midpoint)
+  )
+
+# Fit placeholder risk model on training data
+df_train_exp <- df |>
+  dplyr::filter(split_group == "train") |>
+  mutate(across(c(readmitted_30day, number_inpatient, num_medications,
+                  number_diagnoses, time_in_hospital, age_midpoint), as.numeric))
+
+placeholder_model <- glm(
+  readmitted_30day ~ number_inpatient + num_medications + 
+    number_diagnoses + time_in_hospital + age_midpoint +
+    diag_1_group + admission_type_group,
+  data = df_train_exp,
+  family = binomial()
+)
+
+df_holdout <- df_holdout |>
+  mutate(pred_prob = predict(placeholder_model, 
+                             newdata = df_holdout, 
+                             type = "response"))
+
+# Compute enrollment and baseline risk across thresholds
+thresholds <- seq(0.05, 0.25, by = 0.01)
+
+threshold_summary <- purrr::map_dfr(thresholds, function(tau) {
+  flagged <- df_holdout |> dplyr::filter(pred_prob >= tau)
+  tibble::tibble(
+    threshold = tau,
+    n_flagged = nrow(flagged),
+    pct_flagged = nrow(flagged) / nrow(df_holdout),
+    baseline_risk = mean(flagged$readmitted_30day)
+  )
+})
+
+```
+
+```{r}
+
+# Plot
+p1 <- ggplot(threshold_summary, 
+             aes(x = threshold, y = pct_flagged)) +
+  geom_line(color = "#4E9BB9", linewidth = 1) +
+  geom_point(color = "#4E9BB9", size = 2) +
+  scale_y_continuous(labels = percent) +
+  scale_x_continuous(labels = percent) +
+  labs(
+    title = "% Patients Flagged by Threshold",
+    x = "Risk Threshold (τ)",
+    y = "% Flagged"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+p2 <- ggplot(threshold_summary,
+             aes(x = threshold, y = baseline_risk)) +
+  geom_line(color = "#C0392B", linewidth = 1) +
+  geom_point(color = "#C0392B", size = 2) +
+  scale_y_continuous(labels = percent) +
+  scale_x_continuous(labels = percent) +
+  labs(
+    title = "Baseline Readmission Risk by Threshold",
+    x = "Risk Threshold (τ)",
+    y = "Baseline Readmission Rate"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+p1 + p2
+
+```
+
+```{r}
+
+#| label: threshold-table
+
+threshold_summary |>
+  # dplyr::filter(threshold %in% c(0.05, 0.08, 0.1, 0.12, 0.15, 0.2)) |>
+  mutate(
+    threshold = percent(threshold, accuracy = 1),
+    pct_flagged = percent(pct_flagged, accuracy = 0.1),
+    baseline_risk = percent(baseline_risk, accuracy = 0.1),
+    n_flagged = comma(n_flagged)
+  ) |>
+  kable(
+    col.names = c("Threshold (τ)", "N Flagged", "% Flagged", 
+                  "Baseline Readmission Rate"),
+    caption = "Enrollment and Baseline Risk by Decision Threshold (Holdout Set)"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+
+```
+
+### Selected Design Parameters
+
+Based on the threshold analysis above, we select $\tau = 0.1$ as the 
+primary design threshold, which balances:
+
+- **Clinical feasibility** — flagging a manageable proportion of patients 
+  for enhanced intervention
+- **Statistical efficiency** — sufficient baseline risk to detect clinically 
+  meaningful absolute risk reductions
+- **Operational realism** — consistent with deployment thresholds used in 
+  published clinical decision support literature
+
+Predicted probabilities are generated from a placeholder logistic regression model for illustrative purposes. The threshold analysis will be updated with calibrated predictions from the Part 2 XGBoost and neural network models, which are expected to produce better-discriminating risk scores and more realistic flagging rates.
+
+```{r}
+
+#| label: design-parameters
+
+# Extract parameters at selected threshold
+selected <- threshold_summary |> 
+  dplyr::filter(abs(threshold - 0.10) < 0.001)
+
+cat("Selected threshold (τ):", "10%\n")
+cat("Estimated % patients flagged:", 
+    percent(selected$pct_flagged, accuracy = 0.1), "\n")
+cat("Estimated baseline readmission rate (flagged):", 
+    percent(selected$baseline_risk, accuracy = 0.1), "\n")
+cat("Estimated N flagged per year (assuming ~5,000 annual inpatient admissions):",
+    round(0.067 * selected$pct_flagged * 5000), "\n")
+
+```
+
+The baseline readmission rate among flagged patients at $\tau = 0.10$ 
+directly informs the power calculations in Section 2, replacing the 
+full-cohort rate of ~6.7% with the enriched population rate — a 
+meaningfully different and more realistic assumption for trial planning.
+
+## Section 2: Power Analysis
+
+### Minimum Detectable Effect and Clinical Meaningfulness
+
+The primary power analysis targets the **absolute risk reduction (ARR)** 
+in 30-day readmission rate among flagged patients receiving the intervention 
+bundle versus standard care. We define the **minimum detectable effect (MDE)** 
+as the smallest ARR that would be considered clinically meaningful given 
+operational costs of the intervention.
+
+Published transitional care interventions for high-risk diabetic patients 
+report ARRs ranging from 3-8 percentage points. Given our baseline readmission 
+rate of 11.2% among flagged patients at τ=0.10, we consider:
+
+```{r}
+
+#| label: mde-table
+
+tibble::tibble(
+  ARR = c(0.02, 0.03, 0.04, 0.05, 0.06),
+  RRR = c(0.02, 0.03, 0.04, 0.05, 0.06) / selected$baseline_risk,
+  p_control = selected$baseline_risk,
+  p_treatment = selected$baseline_risk - c(0.02, 0.03, 0.04, 0.05, 0.06)
+) |>
+  mutate(
+    ARR = percent(ARR, accuracy = 0.1),
+    RRR = percent(RRR, accuracy = 0.1),
+    p_control = percent(p_control, accuracy = 0.1),
+    p_treatment = percent(p_treatment, accuracy = 0.1)
+  ) |>
+  kable(
+    col.names = c("Abs Risk Reduction", "Rel Risk Reduction", 
+                  "Ctrl Rate", "Tx Rate"),
+    caption = paste0("Effect Size Scenarios at Baseline Risk of ", round(selected$baseline_risk, 3)*100, "%")
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+
+```
+
+A **3 percentage point ARR** (26.7% relative reduction) is selected as the 
+primary MDE — conservative relative to published literature but operationally 
+meaningful given the cost of the intervention bundle.
+
+### Sample Size Requirements
+
+```{r}
+
+#| label: sample-size
+
+# Parameters
+p_control <- selected$baseline_risk
+alpha_levels <- c(0.05, 0.01)
+power_levels <- c(0.8, 0.9)
+arr_values <- c(0.02, 0.03, 0.04, 0.05, 0.06)
+
+# Compute sample size per arm for all combinations
+ss_results <- purrr::map_dfr(alpha_levels, function(alpha) {
+  purrr::map_dfr(power_levels, function(pwr_level) {
+    purrr::map_dfr(arr_values, function(arr) {
+      p_treat <- p_control - arr
+      test <- pwr.2p.test(
+        h = ES.h(p_control, p_treat),
+        sig.level = alpha,
+        power = pwr_level,
+        alternative = "two.sided"
+      )
+      tibble::tibble(
+        alpha = alpha,
+        power = pwr_level,
+        arr = arr,
+        n_per_arm = ceiling(test$n),
+        n_total = ceiling(test$n) * 2
+      )
+    })
+  })
+})
+
+ss_results |>
+  mutate(
+    arr = percent(arr, accuracy = 1),
+    alpha = as.character(alpha),
+    power = percent(power, accuracy = 1),
+    n_per_arm = comma(n_per_arm),
+    n_total = comma(n_total)
+  ) |>
+  kable(
+    col.names = c("Alpha", "Power", "ARR", 
+                  "N per Arm", "Total N"),
+    caption = "Sample Size Requirements by Effect Size, Alpha, and Power"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) |>
+  collapse_rows(columns = 1:2, valign = "top")
+
+```
+
+### Power Curves
+
+```{r, fig.height=9}
+
+#| label: power-curves
+
+# Power curves across sample sizes for primary scenarios
+n_range <- seq(100, 3000, by = 50)
+
+power_curve_data <- purrr::map_dfr(arr_values, function(arr) {
+  p_treat <- p_control - arr
+  h <- ES.h(p_control, p_treat)
+  purrr::map_dfr(n_range, function(n) {
+    pwr_result <- pwr.2p.test(
+      h = h,
+      n = n,
+      sig.level = 0.05,
+      alternative = "two.sided"
+    )
+    tibble::tibble(
+      arr = paste0("ARR = ", percent(arr, accuracy = 1)),
+      n_per_arm = n,
+      power = pwr_result$power
+    )
+  })
+})
+
+ggplot(power_curve_data, 
+       aes(x = n_per_arm, y = power, color = arr)) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", 
+             color = "gray50", linewidth = 0.9) +
+  geom_hline(yintercept = 0.90, linetype = "dotted",
+             color = "gray50", linewidth = 0.9) +
+  annotate("text", x = 3000, y = 0.82, 
+           label = "80% power", hjust = 1, size = 4) +
+  annotate("text", x = 3000, y = 0.92,
+           label = "90% power", hjust = 1, size = 4) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  scale_x_continuous(labels = comma) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "Power Curves by Effect Size (α = 0.05)",
+    subtitle = "Baseline readmission rate = 11.2% among flagged patients (τ = 0.1)",
+    x = "N per arm",
+    y = "Statistical power",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 13))
+
+```
+
+### Feasibility Assessment
+
+```{r}
+
+#| label: feasibility
+
+# Feasibility based on hypothetical hospital volume
+# Assumption: medium-sized academic medical center with ~5,000 
+# diabetic inpatient admissions per year
+# At tau=0.10 flagging rate of 15.7%, implies ~784 flagged per year
+annual_admissions <- 5000
+flagging_rate <- selected$pct_flagged
+annual_flagged <- round(annual_admissions * flagging_rate)
+annual_per_arm <- floor(annual_flagged / 2)
+
+# Primary scenario: ARR=3pp, alpha=0.05, power=80%
+primary_ss <- ss_results |>
+  dplyr::filter(
+    arr == 0.03,
+    alpha == 0.05,
+    power == 0.8
+  )
+
+years_required <- round(primary_ss$n_per_arm / annual_per_arm, 1)
+
+tibble::tibble(
+  Parameter = c(
+    "Selected threshold (τ)",
+    "Baseline readmission rate (flagged)",
+    "Primary MDE (ARR)",
+    "Alpha",
+    "Power",
+    "Required N per arm",
+    "Required total N",
+    "Estimated annual flagged patients",
+    "Estimated annual per arm",
+    "Estimated enrollment duration"
+  ),
+  Value = c(
+    "10%",
+    "11.2%",
+    "3 perc pts",
+    "0.05",
+    "80%",
+    comma(primary_ss$n_per_arm),
+    comma(primary_ss$n_total),
+    comma(annual_flagged),
+    comma(annual_per_arm),
+    paste0(years_required, " years")
+  )
+) |>
+  kable(
+    caption = "Primary Trial Design Parameters and Feasibility Summary"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+
+```
+
+The feasibility table contextualizes the sample size requirements against 
+realistic enrollment rates. If the primary MDE of 3 percentage points requires 
+more than about 4 years of enrollment at a single site, a multi-site trial or a 
+larger MDE should be considered. The power curves allow stakeholders to 
+explicitly trade off effect size, sample size, and enrollment duration when 
+making trial design decisions.
+
+Above, we see that a medium-sized academic medical center with around 5,000 diabetic inpatient 
+admissions annually, the primary trial scenario (ARR = 3pp, alpha = 0.05, 
+80% power) requires approximately 4 years of enrollment at a single site. 
+This duration is at the upper bound of operational feasibility for a 
+single-site RCT. Three practical alternatives merit consideration:
+
+1. Multi-site trial: Enrolling across 3-4 hospital systems would reduce 
+   enrollment to approximately 12-16 months — strongly preferred.
+
+2. Relaxed MDE: Accepting a 4pp ARR as the primary MDE reduces required 
+   N per arm to 813, cutting enrollment to approximately 2 years at a 
+   single site.
+
+3. Adaptive design: A group sequential design with interim analyses 
+   (Section 3) allows early stopping for efficacy if the effect is larger 
+   than the MDE, potentially reducing realized enrollment duration.
+
+The power curves illustrate that moving from ARR=3pp to ARR=4pp 
+meaningfully reduces sample size while remaining within the range of 
+effects reported in published transitional care literature.

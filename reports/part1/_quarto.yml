@@ -22,5 +22,3 @@ format:
     toc-depth: 3
     code-fold: true
     code-tools: true
-    fig-width: 9
-    fig-height: 6
