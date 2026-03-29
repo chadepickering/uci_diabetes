@@ -9,8 +9,6 @@ format:
     toc-depth: 3
     code-fold: true
     code-tools: true
-    fig-width: 9
-    fig-height: 6
 ---
 
 ```{r}
@@ -20,6 +18,16 @@ format:
 
 options(java.parameters = "--add-opens=java.base/java.nio=ALL-UNNAMED")
 source("/Users/cepickering/Documents/Large Folders/Git/uci_diabetes/reports/part1/R/connections.R")
+
+# Set figure defaults at runtime — overrides project-level YAML
+# Note: per-chunk fig size overrides must use inline syntax {r fig.height=X}
+# NOT hashpipe #| fig.height: X — Quarto book projects ignore hashpipe overrides
+knitr::opts_chunk$set(
+  fig.width = 9,
+  fig.height = 6,
+  fig.align = "center",
+  out.width = "100%"
+)
 
 library(tableone)
 library(kableExtra)
