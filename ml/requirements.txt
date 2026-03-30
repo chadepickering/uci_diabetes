@@ -1,0 +1,16 @@
+# ml/requirements.txt — Part 2 Python environment
+# Python 3.13 (venv_ml)
+# Create env:  python3.13 -m venv venv_ml
+# Activate:    source venv_ml/bin/activate
+# Install:     pip install -r ml/requirements.txt
+
+scikit-learn==1.8.0
+xgboost==3.2.0
+imbalanced-learn==0.14.1
+optuna==4.8.0
+snowflake-connector-python==4.4.0
+pandas==3.0.1
+numpy==2.4.4
+pyarrow==23.0.1
+joblib==1.5.3
+python-dotenv==1.2.2
