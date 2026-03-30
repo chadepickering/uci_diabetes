@@ -260,7 +260,7 @@ Predicted probabilities are generated from a placeholder logistic regression mod
 
 # Extract parameters at selected threshold
 selected <- threshold_summary |> 
-  dplyr::filter(abs(threshold - 0.10) < 0.001)
+  dplyr::filter(abs(threshold - 0.1) < 0.001)
 
 cat("Selected threshold (τ):", "10%\n")
 cat("Estimated % patients flagged:", 
@@ -272,7 +272,7 @@ cat("Estimated N flagged per year (assuming ~5,000 annual inpatient admissions):
 
 ```
 
-The baseline readmission rate among flagged patients at $\tau = 0.10$ 
+The baseline readmission rate among flagged patients at $\tau = 0.1$ 
 directly informs the power calculations in Section 2, replacing the 
 full-cohort rate of ~6.7% with the enriched population rate — a 
 meaningfully different and more realistic assumption for trial planning.
@@ -289,7 +289,7 @@ operational costs of the intervention.
 
 Published transitional care interventions for high-risk diabetic patients 
 report ARRs ranging from 3-8 percentage points. Given our baseline readmission 
-rate of 11.2% among flagged patients at τ=0.10, we consider:
+rate of 11.2% among flagged patients at τ=0.1, we consider:
 
 ```{r}
 
@@ -442,7 +442,7 @@ ggplot(power_curve_data,
 # Feasibility based on hypothetical hospital volume
 # Assumption: medium-sized academic medical center with ~5,000 
 # diabetic inpatient admissions per year
-# At tau=0.10 flagging rate of 15.7%, implies ~784 flagged per year
+# At tau=0.1 flagging rate of 15.7%, implies ~784 flagged per year
 annual_admissions <- 5000
 flagging_rate <- selected$pct_flagged
 annual_flagged <- round(annual_admissions * flagging_rate)
@@ -669,3 +669,301 @@ reducing the risk of false positives from repeated testing.
 design is strongly preferred over a fixed sample design given the 4-year 
 enrollment horizon. Even modest early stopping at Interim 2 or 3 would 
 meaningfully reduce operational burden and time to clinical impact.
+
+
+## Section 4: Mock Pre-Registration
+
+The following documents a structured pre-registration for the proposed trial, 
+following the AsPredicted.org and OSF pre-registration frameworks adapted for 
+a clinical RCT context. Pre-registration constrains researcher degrees of 
+freedom and distinguishes confirmatory from exploratory analyses.
+
+---
+
+### Trial Title
+
+**PREDICT-DM: A Randomized Controlled Trial of Machine Learning-Based 
+Readmission Risk Scoring to Reduce 30-Day Hospital Readmission in Diabetic 
+Inpatients**
+
+---
+
+### Primary Research Question
+
+Among diabetic inpatients flagged as high-risk by a validated machine 
+learning readmission risk model (predicted probability ≥ 10% (tau)), 
+does exposure to an evidence-based intervention bundle triggered by the risk 
+score reduce 30-day hospital readmission rates compared to standard care?
+
+---
+
+### Design Overview
+
+```{r}
+
+#| label: prereg-design
+
+tibble::tibble(
+  Parameter = c(
+    "Trial design",
+    "Randomization unit",
+    "Treatment arms",
+    "Enrollment criteria",
+    "Primary outcome",
+    "Secondary outcomes",
+    "Follow-up period",
+    "Blinding"
+  ),
+  Specification = c(
+    "Parallel-group RCT with group sequential monitoring",
+    "Individual patient encounter",
+    "Intervention bundle vs. standard care (1:1 allocation)",
+    "Adult diabetic inpatients with predicted readmission probability ≥ 10% at discharge planning",
+    "30-day all-cause hospital readmission",
+    "7-day readmission rate; emergency department visits within 30 days; length of stay",
+    "30 days post-discharge",
+    "Single-blind: patients and care teams unblinded; outcome assessors blinded"
+  )
+) |>
+  kable(caption = "Trial Design Parameters") |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
+
+---
+
+### Primary Estimand
+
+The primary estimand is the **Average Treatment Effect among flagged patients (ATT)** — 
+the absolute risk reduction in 30-day readmission among patients 
+with predicted readmission probability ≥ τ = 0.1 who receive the 
+intervention bundle versus standard care:
+
+$$ATT = E[Y(1) - Y(0) \mid \hat{p} \geq 0.1]$$
+
+The estimand is defined on the **intention-to-treat (ITT)** population — 
+all randomized patients regardless of intervention compliance.
+
+---
+
+### Sample Size Justification
+
+```{r}
+
+#| label: prereg-sample-size
+
+tibble::tibble(
+  Parameter = c(
+    "Baseline readmission rate (control arm)",
+    "Minimum detectable effect (ARR)",
+    "Relative risk reduction",
+    "Type I error rate (two-sided)",
+    "Statistical power",
+    "Required N per arm",
+    "Required total N",
+    "Sequential design",
+    "Number of analyses",
+    "Alpha spending function",
+    "Expected N under H1",
+    "Enrollment duration (single site)"
+  ),
+  Value = c(
+    "11.2%",
+    "3 perc pts",
+    "26.8%",
+    "0.05",
+    "80%",
+    "1,524",
+    "3,048",
+    "O'Brien-Fleming group sequential",
+    "4 (3 interim + 1 final, annually)",
+    "Lan-DeMets O'Brien-Fleming",
+    "~2,505 (savings of ~543 vs fixed)",
+    "~4 years (single site); ~12-16 months (multi-site, 3-4 hospitals)"
+  )
+) |>
+  kable(caption = "Sample Size Justification") |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+
+```
+
+---
+
+### Randomization Procedure
+
+Patients flagged by the risk model at discharge planning will be randomized 
+1:1 to intervention or control using **stratified block randomization** with 
+stratification by:
+
+- Primary diagnosis group (Diabetes vs. Circulatory vs. Other)
+- Admission type (Emergency vs. Elective)
+- Site (for multi-site implementation)
+
+Block sizes will be randomly varied (4 and 6) and allocation concealed via 
+a centralized web-based randomization system to prevent selection bias.
+
+---
+
+### Intervention Bundle Specification
+
+```{r}
+
+#| label: prereg-intervention
+
+tibble::tibble(
+  Component = c(
+    "Enhanced discharge planning",
+    "Expedited follow-up",
+    "Transitional care enrollment",
+    "Pharmacist reconciliation",
+    "Targeted care gap closure"
+  ),
+  Timing = c(
+    "24 hours before discharge",
+    "Scheduled before discharge order signed",
+    "Assigned within 2 hours of randomization",
+    "Completed before discharge",
+    "Completed before discharge"
+  ),
+  Responsible_Party = c(
+    "Social work + care coordinator",
+    "Scheduling system + attending physician",
+    "Nurse navigator",
+    "Clinical pharmacist",
+    "Attending physician + care coordinator"
+  )
+) |>
+  kable(
+    col.names = c("Component", "Timing", "Responsible Party"),
+    caption = "Intervention Bundle Specification"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
+
+---
+
+### Statistical Analysis Plan
+
+**Primary analysis:**
+Logistic regression of 30-day readmission on treatment arm indicator, 
+adjusted for stratification variables (primary diagnosis group, admission 
+type, site). Reported as odds ratio with 95% confidence interval and 
+absolute risk difference with 95% CI.
+
+**Sequential monitoring:**
+Interim analyses conducted at approximately equal information fractions 
+(25%, 50%, 75%, 100%) using O'Brien-Fleming spending function. The 
+Data Safety Monitoring Board (DSMB) will review unblinded results at 
+each interim. Stopping for efficacy requires crossing the pre-specified 
+Z boundary. Stopping for futility is advisory, not binding.
+
+**Secondary analyses:**
+
+- Subgroup analyses by primary diagnosis group, age group, and HbA1c 
+  testing status — all pre-specified, all reported with interaction 
+  p-values, none powered for subgroup effects
+
+- Sensitivity analysis excluding patients with protocol deviations
+
+- Per-protocol analysis as sensitivity to ITT
+
+**Handling of missing outcomes:**
+Multiple imputation under missing-at-random (MAR) assumption for patients 
+lost to follow-up. Sensitivity analysis under missing-not-at-random (MNAR) 
+assumption using tipping point analysis.
+
+---
+
+### Stopping Rules
+
+```{r}
+
+#| label: prereg-stopping
+
+tibble::tibble(
+  Analysis = c("Interim 1 (Year 1)", "Interim 2 (Year 2)", 
+               "Interim 3 (Year 3)", "Final (Year 4)"),
+  Information_Fraction = round(gs$timing, 3),
+  Efficacy_Z = round(gs$upper$bound, 3),
+  Efficacy_p = round(2 * pnorm(-abs(gs$upper$bound)), 4),
+  Action = c(
+    "Stop for overwhelming efficacy only",
+    "Stop for efficacy or advisory futility review",
+    "Stop for efficacy or advisory futility review",
+    "Final decision — stop regardless"
+  )
+) |>
+  kable(
+    col.names = c("Analysis", "Information Fraction",
+                  "Efficacy Boundary (Z)", "Efficacy Boundary (p)",
+                  "DSMB Action"),
+    caption = "Pre-Specified Stopping Rules"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
+
+---
+
+### Deviations from Pre-Registration
+
+Any analyses not specified above would be clearly labeled as **exploratory** 
+in a final manuscript. The threshold τ = 0.1 and the MDE of 3 percentage 
+points are fixed and may not be revised after enrollment begins without DSMB 
+approval and protocol amendment. Model updating (retraining the risk model 
+on new data) would not permitted during the trial period.
+
+---
+
+### Limitations and Threats to Validity
+
+```{r}
+
+#| label: prereg-limitations
+
+tibble::tibble(
+  Threat = c(
+    "Unmeasured confounding",
+    "Contamination",
+    "Temporal outcome drift",
+    "Model degradation",
+    "Enrollment feasibility"
+  ),
+  Description = c(
+    "Residual severity confounding not captured by observed covariates",
+    "Control arm patients may receive elements of intervention bundle informally",
+    "Readmission rates observed to decline over 1999-2008 study period; similar drift may occur during trial",
+    "Risk model performance may degrade over time as patient population evolves",
+    "4-year single-site enrollment horizon is at upper bound of operational feasibility"
+  ),
+  Mitigation = c(
+    "Randomization eliminates confounding within flagged population; E-value sensitivity analysis planned",
+    "Cluster randomization by ward or unit as alternative design if contamination detected",
+    "Stratified randomization by enrollment period; temporal trend included as covariate in primary model",
+    "Scheduled model performance review at each interim analysis; retraining protocol pre-specified",
+    "Multi-site expansion pre-planned; adaptive sample size re-estimation at Interim 2 if enrollment lags"
+  )
+) |>
+  kable(
+    col.names = c("Threat", "Description", "Mitigation"),
+    caption = "Threats to Validity and Mitigations"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = TRUE
+  )
+
+```
