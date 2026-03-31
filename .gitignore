@@ -216,4 +216,8 @@ __marimo__/
 .streamlit/secrets.toml
 /data/
 /drivers/*.jar
+
+# ML artifacts
+*.parquet
+*.joblib
 /docs/
