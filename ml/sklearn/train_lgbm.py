@@ -1,23 +1,26 @@
 """
-train_xgb.py — XGBoost primary classifier
+train_lgbm.py — Step 2c: LightGBM classifier.
 
-Tunes hyperparameters via Optuna using the validation set as the eval
-metric with early stopping. This is intentional: XGBoost's early stopping
-requires a held-out eval set, and the holdout parquet remains untouched
-throughout. The best hyperparameters are used to fit a final model on the
-full training set, calibrated via Platt scaling (same pattern as train_lr.py),
-then evaluated on validation.
+LightGBM uses leaf-wise tree growth rather than XGBoost's level-wise growth.
+The primary regularization levers are `num_leaves` (controls tree complexity
+directly) and `min_child_samples` (absolute sample count per leaf — more
+interpretable than XGBoost's hessian-sum `min_child_weight` for sparse classes).
 
-SHAP values are computed via TreeExplainer on the base (uncalibrated)
-XGBoost estimator and saved alongside LR coefficients for direct comparison.
+Class imbalance is handled via `class_weight='balanced'`, followed by Platt
+scaling calibration — consistent with LR and XGBoost.
+
+Hyperparameters are tuned via Optuna (100 trials) using the validation set
+with LightGBM early stopping. Holdout is never touched.
+
+SHAP values are computed via TreeExplainer on the base (uncalibrated) estimator.
 
 Outputs saved to ml/data/:
-  xgb_model.joblib       — fitted CalibratedClassifierCV wrapping XGBClassifier
-  xgb_metrics.json       — train + validation metrics
-  xgb_shap_importance.csv — mean |SHAP| per feature, ranked
+  lgbm_model.joblib       — fitted CalibratedClassifierCV wrapping LGBMClassifier
+  lgbm_metrics.json       — train + validation metrics
+  lgbm_shap_importance.csv — mean |SHAP| per feature on validation set, ranked
 
 Usage:
-    python ml/sklearn/train_xgb.py [--n-trials N]
+    python ml/sklearn/train_lgbm.py [--n-trials N]
 """
 
 import argparse
@@ -25,34 +28,30 @@ import pathlib
 import sys
 
 import joblib
+import lightgbm as lgb
 import numpy as np
 import optuna
 import pandas as pd
 import shap
-from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import roc_auc_score
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from evaluate import evaluate, save_metrics
-
-from sklearn.calibration import CalibratedClassifierCV
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-REPO_ROOT     = pathlib.Path(__file__).resolve().parents[2]
-DATA_DIR      = REPO_ROOT / "ml" / "data"
-MODEL_PATH    = DATA_DIR / "xgb_model.joblib"
-METRICS_PATH  = DATA_DIR / "xgb_metrics.json"
-SHAP_PATH     = DATA_DIR / "xgb_shap_importance.csv"
+REPO_ROOT    = pathlib.Path(__file__).resolve().parents[2]
+DATA_DIR     = REPO_ROOT / "ml" / "data"
+MODEL_PATH   = DATA_DIR / "lgbm_model.joblib"
+METRICS_PATH = DATA_DIR / "lgbm_metrics.json"
+SHAP_PATH    = DATA_DIR / "lgbm_shap_importance.csv"
 
 TARGET = "readmitted_30day"
-
-# Class imbalance ratio (n_negative / n_positive, computed from training set)
-# Fixed rather than tuned — this is a dataset property, not a hyperparameter.
-SCALE_POS_WEIGHT = 45236 / 3470  # ≈ 13.03
-
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +64,16 @@ def load_split(name: str) -> tuple[pd.DataFrame, pd.Series]:
 
 
 # ---------------------------------------------------------------------------
+# Feature name sanitization
+# LightGBM also forbids '[', ']', '<' in feature names.
+# ---------------------------------------------------------------------------
+def sanitize(name: str) -> str:
+    return name.replace("[", "(").replace("]", ")").replace("<", "lt")
+
+
+# ---------------------------------------------------------------------------
 # Optuna objective
-# Tunes against validation AUC-ROC with XGBoost early stopping.
+# Tunes against validation AUC-ROC with LightGBM early stopping.
 # ---------------------------------------------------------------------------
 def make_objective(
     X_train: np.ndarray,
@@ -78,34 +85,42 @@ def make_objective(
     def objective(trial: optuna.Trial) -> float:
         params = {
             "n_estimators":      trial.suggest_int("n_estimators", 150, 600),
-            "max_depth":         trial.suggest_int("max_depth", 3, 8),
+            # num_leaves is the primary complexity control in LightGBM.
+            # Rule of thumb: num_leaves < 2^max_depth. Range covers shallow
+            # (20) to moderately complex (150) trees.
+            "num_leaves":        trial.suggest_int("num_leaves", 15, 60),
             "learning_rate":     trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            # subsample / bagging — requires bagging_freq > 0 to activate.
             "subsample":         trial.suggest_float("subsample", 0.5, 1.0),
+            "subsample_freq":    1,
             "colsample_bytree":  trial.suggest_float("colsample_bytree", 0.5, 1.0),
-            "min_child_weight":  trial.suggest_int("min_child_weight", 1, 10),
-            "gamma":             trial.suggest_float("gamma", 0.0, 5.0),
+            # min_child_samples: absolute sample count per leaf.
+            # With ~3,470 positives in training, a floor of 20-200 prevents
+            # leaves formed from just a handful of minority-class examples.
+            "min_child_samples": trial.suggest_int("min_child_samples", 20, 200),
             "reg_alpha":         trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
             "reg_lambda":        trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
         }
 
-        model = XGBClassifier(
+        model = LGBMClassifier(
             **params,
-            scale_pos_weight=SCALE_POS_WEIGHT,
-            objective="binary:logistic",
-            eval_metric="auc",
-            early_stopping_rounds=30,
+            class_weight="balanced",
+            objective="binary",
+            metric="auc",
             random_state=26904,
             n_jobs=-1,
-            verbosity=0,
+            verbosity=-1,
         )
         model.fit(
             X_train, y_train,
             eval_set=[(X_val, y_val)],
-            verbose=False,
+            callbacks=[
+                lgb.early_stopping(stopping_rounds=30, verbose=False),
+                lgb.log_evaluation(period=-1),
+            ],
         )
 
         val_probs = model.predict_proba(X_val)[:, 1]
-        from sklearn.metrics import roc_auc_score
         return roc_auc_score(y_val, val_probs)
 
     return objective
@@ -120,11 +135,6 @@ def main(n_trials: int = 100) -> None:
     X_val,   y_val   = load_split("validation")
     print(f"  Train:      X={X_train.shape}, pos-rate={y_train.mean():.3f}")
     print(f"  Validation: X={X_val.shape}, pos-rate={y_val.mean():.3f}")
-    print(f"  scale_pos_weight = {SCALE_POS_WEIGHT:.2f}")
-
-    # XGBoost forbids '[', ']', '<' in feature names — sanitize in place.
-    def sanitize(name: str) -> str:
-        return name.replace("[", "(").replace("]", ")").replace("<", "lt")
 
     feature_names = [sanitize(c) for c in X_train.columns]
     X_train.columns = feature_names
@@ -155,27 +165,25 @@ def main(n_trials: int = 100) -> None:
     print(f"  Validation AUC    = {study.best_value:.4f}")
 
     # -------------------------------------------------------------------
-    # Fit final model on full training set with best params
-    # No early stopping here — use the best n_estimators from search.
+    # Fit final model on full training set with best params.
+    # No early stopping — use n_estimators from search directly.
     # -------------------------------------------------------------------
     print("\nFitting final model on full training set…")
-    base_model = XGBClassifier(
+    base_model = LGBMClassifier(
         **best,
-        scale_pos_weight=SCALE_POS_WEIGHT,
-        objective="binary:logistic",
-        eval_metric="auc",
+        class_weight="balanced",
+        objective="binary",
+        metric="auc",
         random_state=26904,
         n_jobs=-1,
-        verbosity=0,
-        feature_names=feature_names,
+        verbosity=-1,
+        feature_name=feature_names,
     )
     base_model.fit(X_train, y_train)
 
     # -------------------------------------------------------------------
     # Platt calibration (sigmoid, 5-fold CV on training set)
-    # Consistent with LR approach; corrects score distribution for τ=0.10.
-    # XGBoost with scale_pos_weight is less severely miscalibrated than
-    # balanced LR, but calibration is applied for clinical consistency.
+    # Consistent with LR and XGBoost approaches.
     # -------------------------------------------------------------------
     print("Calibrating probabilities (Platt scaling, 5-fold CV)…")
     model = CalibratedClassifierCV(base_model, method="sigmoid", cv=5)
@@ -187,6 +195,10 @@ def main(n_trials: int = 100) -> None:
     print("\nComputing SHAP values on validation set…")
     explainer   = shap.TreeExplainer(base_model)
     shap_values = explainer.shap_values(X_val)
+
+    # LightGBM TreeExplainer may return a list [neg_class, pos_class]
+    if isinstance(shap_values, list):
+        shap_values = shap_values[1]
 
     shap_df = pd.DataFrame({
         "feature":       feature_names,
@@ -208,10 +220,9 @@ def main(n_trials: int = 100) -> None:
     ]
 
     for m in metrics:
-        m["best_params"]   = {k: round(v, 6) if isinstance(v, float) else v
-                              for k, v in best.items()}
-        m["calibration"]   = "platt_sigmoid_cv5"
-        m["scale_pos_weight"] = round(SCALE_POS_WEIGHT, 4)
+        m["best_params"]  = {k: round(v, 6) if isinstance(v, float) else v
+                             for k, v in best.items()}
+        m["calibration"]  = "platt_sigmoid_cv5"
 
     # -------------------------------------------------------------------
     # Save

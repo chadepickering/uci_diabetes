@@ -5,9 +5,8 @@ All files in this directory are generated and excluded from version control
 
 ---
 
-## Reproduction Steps
+## Prerequisites
 
-### Prerequisites
 Activate the ML virtual environment and ensure `.env` is present at the repo root
 with `SNOWFLAKE_USER` and `SNOWFLAKE_PASSWORD` set.
 
@@ -15,7 +14,9 @@ with `SNOWFLAKE_USER` and `SNOWFLAKE_PASSWORD` set.
 source venv_ml/bin/activate
 ```
 
-### Step 1 — Preprocessing
+---
+
+## Step 1 — Preprocessing
 
 ```bash
 python ml/sklearn/preprocess.py
@@ -33,7 +34,15 @@ sklearn `ColumnTransformer` pipeline, and writes:
 | `preprocessor.joblib` | Fitted `ColumnTransformer` (training-set statistics only) |
 | `feature_names.txt` | Ordered list of 74 output feature names |
 
-Use `--dry-run` to skip Snowflake and load from `raw_features.parquet` if already cached.
+Use `--dry-run` to skip Snowflake and load from `raw_features.parquet` if cached.
+
+---
+
+## Step 2 — Model Training
+
+Each script runs an Optuna hyperparameter search, fits a final calibrated model,
+and writes a `.joblib`, a `_metrics.json`, and a feature importance file.
+See the corresponding README in `ml/sklearn/` for full model details.
 
 ### Step 2a — Logistic Regression Baseline
 
@@ -41,59 +50,53 @@ Use `--dry-run` to skip Snowflake and load from `raw_features.parquet` if alread
 python ml/sklearn/train_lr.py [--n-trials N]
 ```
 
-Runs an Optuna hyperparameter search (default 50 trials) over `C` and `l1_ratio`
-using 5-fold stratified CV on the training set (scoring: AUC-ROC), then fits the
-final model on the full training set. Writes:
+| File | Description |
+|---|---|
+| `lr_model.joblib` | Fitted `CalibratedClassifierCV` wrapping `LogisticRegression` |
+| `lr_metrics.json` | Train + validation metrics |
+| `lr_coefficients.csv` | All 74 features ranked by `abs(coefficient)` |
+
+→ See [ml/sklearn/README_lr.md](../sklearn/README_lr.md)
+
+### Step 2b — XGBoost
+
+```bash
+python ml/sklearn/train_xgb.py [--n-trials N]
+```
 
 | File | Description |
 |---|---|
-| `lr_model.joblib` | Fitted `LogisticRegression` (ElasticNet, best params) |
-| `lr_metrics.json` | Train + validation metrics including best hyperparameters |
-| `lr_coefficients.csv` | All 74 features ranked by `abs(coefficient)` |
+| `xgb_model.joblib` | Fitted `CalibratedClassifierCV` wrapping `XGBClassifier` |
+| `xgb_metrics.json` | Train + validation metrics |
+| `xgb_shap_importance.csv` | Mean \|SHAP\| per feature on validation set, ranked |
+
+→ See [ml/sklearn/README_xgb.md](../sklearn/README_xgb.md)
+
+### Step 2c — LightGBM
+
+```bash
+python ml/sklearn/train_lgbm.py [--n-trials N]
+```
+
+| File | Description |
+|---|---|
+| `lgbm_model.joblib` | Fitted `CalibratedClassifierCV` wrapping `LGBMClassifier` |
+| `lgbm_metrics.json` | Train + validation metrics |
+| `lgbm_shap_importance.csv` | Mean \|SHAP\| per feature on validation set, ranked |
+
+→ See [ml/sklearn/README_lgbm.md](../sklearn/README_lgbm.md)
 
 ---
 
-## Logistic Regression — Model Insights
+## Model Comparison (validation set, τ=0.10)
 
-### Configuration
-- Penalty: ElasticNet (`solver='saga'`, `l1_ratio` passed directly — sklearn ≥ 1.8 compatible)
-- Class weighting: `balanced` (~13:1 imbalance corrected), followed by Platt scaling calibration
-- Calibration: `CalibratedClassifierCV(method='sigmoid', cv=5)` fit on training set only
-- Hyperparameter search: Optuna TPE, 50 trials, 5-fold stratified CV (scoring: AUC-ROC)
-- SAGA convergence: `max_iter=5000`, `tol=1e-4`
+| Metric | LR | XGBoost | LightGBM |
+|---|---|---|---|
+| AUC-ROC | 0.676 | **0.687** | 0.685 |
+| AUC-PR | **0.128** | 0.113 | 0.125 |
+| Brier | 0.052 | 0.052 | 0.052 |
+| Recall@τ | 0.366 | **0.512** | 0.501 |
+| Precision@τ | 0.107 | **0.111** | 0.106 |
+| Train-val gap | **0.023** | 0.099 | 0.141 |
 
-### Best Hyperparameters
-| Parameter | Value | Interpretation |
-|---|---|---|
-| `C` | 0.017534 | Strong regularization |
-| `l1_ratio` | 0.6508 | Substantial L1 component — variable selection active |
-| CV AUC-ROC | 0.6932 | Honest cross-validated estimate |
-
-### Performance (calibrated probabilities)
-| Split | AUC-ROC | AUC-PR | Brier | Flagged | Flagged pos rate | Precision@τ | Recall@τ | F1@τ |
-|---|---|---|---|---|---|---|---|---|
-| Train | 0.699 | 0.148 | 0.064 | 16.7% | 14.9% | 0.149 | 0.350 | 0.209 |
-| Validation | 0.676 | 0.128 | 0.052 | 19.4% | 10.7% | 0.107 | 0.366 | 0.165 |
-
-Train → validation AUC gap is modest (0.023). Brier scores are low and well-scaled
-after Platt calibration — flagged rates are realistic (~15-19%) and close to the
-Part 1 experimental design expectation of ~15.7% at τ=0.10.
-
-### Feature Selection
-`l1_ratio=0.651` zeroed out 26 of 74 features, leaving **48 non-zero coefficients**.
-Zeroed features include redundant utilization composites (`number_outpatient`,
-several `number_emergency` variants), medication columns collinear with
-`diabetes_med_Yes`, and low-signal diagnosis subcategories. The 48 retained
-features are the recommended starting set for XGBoost and the neural network.
-
-### Top Features by |Coefficient| (causal consistency check)
-| Feature | Coefficient | Direction consistent with Part 1? |
-|---|---|---|
-| `numeric__number_inpatient` | +0.314 | **Yes — AIPW RR ~2.0 in Part 1** |
-| `numeric__time_in_hospital` | +0.302 | Yes — longer stays → sicker patients |
-| `nominal__diag_1_group_Respiratory` | −0.295 | Yes — acute respiratory events are discrete, not chronic high-utilizer presentations |
-| `nominal__diabetes_med_Yes` | +0.236 | Expected — signals disease severity |
-| `numeric__number_diagnoses` | +0.177 | Yes — comorbidity burden |
-| `a1c_ord__a1cresult` | −0.029 | Yes — HbA1c testing is protective (IPTW OR ~0.918 in Part 1) |
-| `med_ord__insulin` | +0.023 | Yes — positive association (PSM OR ~1.17 in Part 1) |
-| `med_ord__metformin` | −0.080 | Plausible — active metformin use signals better-managed diabetes |
+XGBoost leads on AUC-ROC and recall at τ=0.10. Holdout evaluation is the tiebreaker.
