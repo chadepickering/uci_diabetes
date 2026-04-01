@@ -1,0 +1,22 @@
+project:
+  type: book
+  output-dir: ../../docs/part2
+
+book:
+  title: "UCI Diabetes Readmission — Machine Learning Evaluation"
+  author: "Chad Pickering"
+  chapters:
+    - index.qmd
+    - 01_model_eval.qmd
+
+execute:
+  warning: false
+  message: false
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
