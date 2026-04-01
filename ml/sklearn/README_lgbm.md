@@ -1,4 +1,4 @@
-# LightGBM Model — Step 2c
+# LightGBM Model
 
 ## Reproduction
 

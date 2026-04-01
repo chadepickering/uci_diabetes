@@ -1,4 +1,4 @@
-# Logistic Regression Baseline — Step 2a
+# Logistic Regression Baseline
 
 ## Reproduction
 

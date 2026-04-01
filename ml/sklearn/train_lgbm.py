@@ -1,5 +1,5 @@
 """
-train_lgbm.py — Step 2c: LightGBM classifier.
+train_lgbm.py — LightGBM classifier
 
 LightGBM uses leaf-wise tree growth rather than XGBoost's level-wise growth.
 The primary regularization levers are `num_leaves` (controls tree complexity

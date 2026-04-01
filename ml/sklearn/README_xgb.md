@@ -1,4 +1,4 @@
-# XGBoost Model — Step 2b
+# XGBoost Model
 
 ## Reproduction
 
