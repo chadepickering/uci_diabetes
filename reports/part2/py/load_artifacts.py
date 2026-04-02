@@ -32,8 +32,10 @@ except NameError:
 DATA_DIR  = REPO_ROOT / "ml" / "data"
 ML_DIR    = REPO_ROOT / "ml"
 
-TARGET = "readmitted_30day"
-TAU    = 0.10
+TARGET  = "readmitted_30day"
+TAU     = 0.12   # deployment threshold — τ=0.12 flags ~16% of patients, consistent with
+                 # Part 1 power analysis target (~15.7%). τ=0.10 metrics cached in JSON files.
+TAU_10  = 0.10   # retained for reference; τ=0.10 metrics cached in *_metrics.json
 
 
 # ---------------------------------------------------------------------------

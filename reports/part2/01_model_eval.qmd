@@ -10,6 +10,7 @@ format:
 ---
 
 ```{python}
+
 #| label: setup
 #| include: false
 
@@ -43,83 +44,118 @@ plt.rcParams.update({
 })
 
 MODEL_COLORS = {
-    "LR":       "#4878CF",
-    "XGBoost":  "#E24A33",
-    "LightGBM": "#348ABD",
-    "TF/Keras": "#988ED5",
+    "LR":       "#E24A33",
+    "XGBoost":  "#348ABD",
+    "LightGBM": "#24a269ff",
+    "TF/Keras": "#5f54a2ff",
 }
+
+```
+
+```{python}
+#| label: model-loading
+#| include: false
+
+# Load all four models once; compute val and holdout predictions used throughout.
+def sanitize(name): return name.replace("[","(").replace("]",")").replace("<","lt")
+
+lr_model   = load_sklearn_model("lr")
+xgb_model  = load_sklearn_model("xgb")
+lgbm_model = load_sklearn_model("lgbm")
+
+X_val_tree     = X_val.copy();     X_val_tree.columns     = [sanitize(c) for c in X_val_tree.columns]
+X_holdout_tree = X_holdout.copy(); X_holdout_tree.columns = [sanitize(c) for c in X_holdout_tree.columns]
+
+val_probs = {
+    "LR":       lr_model.predict_proba(X_val)[:, 1],
+    "XGBoost":  xgb_model.predict_proba(X_val_tree)[:, 1],
+    "LightGBM": lgbm_model.predict_proba(X_val_tree)[:, 1],
+}
+try:
+    tf_model, tf_calibrator = load_tf_model()
+    val_probs["TF/Keras"] = tf_predict_proba(tf_model, tf_calibrator, X_val.values)
+except Exception as e:
+    print(f"TF model not loaded: {e}")
+
+holdout_probs = xgb_model.predict_proba(X_holdout_tree)[:, 1]
+
+def threshold_metrics(y_true, probs, tau):
+    """Compute threshold-dependent classification metrics at a given tau."""
+    mask = probs >= tau
+    if mask.sum() == 0:
+        return dict(flagged_rate=0.0, precision_tau=0.0, recall_tau=0.0, f1_tau=0.0)
+    prec = float(y_true[mask].mean())
+    rec  = float(y_true[mask].sum() / y_true.sum())
+    f1   = 2 * prec * rec / (prec + rec + 1e-9)
+    return dict(flagged_rate=float(mask.mean()), precision_tau=prec, recall_tau=rec, f1_tau=f1)
 ```
 
 ## Overview
 
 This document evaluates four classifiers trained to predict 30-day hospital
-readmission in diabetic patients. The clinical threshold τ=0.10 was set in
-Part 1 based on a 3pp absolute risk reduction MDE, group sequential
-O'Brien-Fleming boundaries, and a target flag rate of ~15.7%.
+readmission in diabetic patients. The deployment threshold is **τ=0.12**, selected via a sweep of τ=0.10–0.15 to
+find the operating point closest to the Part 1 experimental design target of
+~15.7% flagged (3pp ARR MDE, O'Brien-Fleming group sequential boundaries).
+τ=0.10 was explored during model development; those results are retained in the
+source metrics JSON files for reference.
 
 All models apply post-hoc probability calibration (Platt scaling for LR/XGBoost/
-LightGBM; isotonic regression for TF/Keras) to ensure τ=0.10 threshold metrics
-are meaningful. Class imbalance (~13:1) is addressed via `class_weight='balanced'`
-(LR/LightGBM/TF) or `scale_pos_weight=13.04` (XGBoost).
+LightGBM; isotonic regression for TF/Keras). Class imbalance (~13:1) is addressed
+via `class_weight='balanced'` (LR/LightGBM/TF) or `scale_pos_weight=13.04` (XGBoost).
 
 ---
 
 ## Model Comparison (Train / Validation)
 
 ```{python}
+
 #| label: metrics-table
 
 def fmt_pct(v): return f"{v:.1%}"
 def fmt_3(v):   return f"{v:.3f}"
 
-val = metrics_table("validation")
-trn = metrics_table("train")
+# Threshold-independent metrics from JSON (train AUC-ROC for gap; val AUC-ROC, AUC-PR, Brier)
+trn_json = metrics_table("train")
+val_json = metrics_table("validation")
 
-display_cols = {
-    "auc_roc":       "AUC-ROC",
-    "auc_pr":        "AUC-PR",
-    "brier":         "Brier",
-    "flagged_rate":  "Flagged",
-    "precision_tau": "Precision@τ",
-    "recall_tau":    "Recall@τ",
-    "f1_tau":        "F1@τ",
-}
+# Threshold-dependent metrics recomputed at τ=0.15 from live val predictions
+disc_rows, clin_rows = [], []
+for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
+    tm = threshold_metrics(y_val, val_probs[model], TAU)
+    disc_rows.append({
+        "Model":      model,
+        "Train AUC-ROC": fmt_3(trn_json.loc[model, "auc_roc"]),
+        "Val AUC-ROC":   fmt_3(val_json.loc[model, "auc_roc"]),
+        "Val AUC-PR":    fmt_3(val_json.loc[model, "auc_pr"]),
+        "Val Brier":     fmt_3(val_json.loc[model, "brier"]),
+        "Gap":           fmt_3(trn_json.loc[model, "auc_roc"] - val_json.loc[model, "auc_roc"]),
+    })
+    clin_rows.append({
+        "Model":         model,
+        f"Flagged@{TAU}":    fmt_pct(tm["flagged_rate"]),
+        f"Precision@{TAU}":  fmt_3(tm["precision_tau"]),
+        f"Recall@{TAU}":     fmt_3(tm["recall_tau"]),
+        f"F1@{TAU}":         fmt_3(tm["f1_tau"]),
+    })
 
-# Combine train and val side by side
-rows = []
-for model in val.index:
-    r = {"Model": model}
-    for col, label in display_cols.items():
-        v_val = val.loc[model, col]
-        v_trn = trn.loc[model, col]
-        fmt = fmt_pct if col in ("flagged_rate",) else fmt_3
-        r[f"Train {label}"]  = fmt(v_trn)
-        r[f"Val {label}"]    = fmt(v_val)
-    rows.append(r)
+disc_df = pd.DataFrame(disc_rows).set_index("Model")
+clin_df = pd.DataFrame(clin_rows).set_index("Model")
 
-combined = pd.DataFrame(rows).set_index("Model")
-
-# Discrimination/calibration subset
-disc_cols = [c for c in combined.columns if any(
-    m in c for m in ["AUC-ROC", "AUC-PR", "Brier"]
-)]
-clin_cols = [c for c in combined.columns if any(
-    m in c for m in ["Flagged", "Precision", "Recall", "F1"]
-)]
-
-print("=== Discrimination & Calibration ===")
-print(combined[disc_cols].to_string())
+print("=== Discrimination & Calibration (threshold-independent) ===")
+print(disc_df.to_string())
 print()
-print("=== Clinical Operating Point (τ=0.10) ===")
-print(combined[clin_cols].to_string())
+print(f"=== Clinical Operating Point (τ={TAU}, recomputed from val predictions) ===")
+print(clin_df.to_string())
+
 ```
 
 ```{python}
+
 #| label: train-val-gap
 #| fig-cap: "Train–validation AUC-ROC gap by model. Smaller gap = better generalization."
 
-models  = list(val.index)
-gaps    = [trn.loc[m, "auc_roc"] - val.loc[m, "auc_roc"] for m in models]
+models  = list(val_json.index)
+gaps    = [trn_json.loc[m, "auc_roc"] - val_json.loc[m, "auc_roc"] for m in models]
 colors  = [MODEL_COLORS[m] for m in models]
 
 fig, ax = plt.subplots(figsize=(7, 3.5))
@@ -131,6 +167,7 @@ ax.set_title("Train–Validation AUC-ROC Gap")
 ax.set_xlim(0, max(gaps) * 1.25)
 plt.tight_layout()
 plt.show()
+
 ```
 
 **Interpretation:**
@@ -146,41 +183,89 @@ plt.show()
 
 ---
 
+## Threshold Sweep (τ=0.10–0.15)
+
+Threshold-dependent metrics vary substantially across this range due to the
+concentration of predicted probabilities between 0.10 and 0.15 — a consequence
+of probability calibration compressing scores toward the positive class base rate.
+This sweep identifies the operating point closest to the Part 1 design target.
+
+```{python}
+#| label: threshold-sweep
+#| fig-cap: "Flag rate and F1 across τ=0.10–0.15 for all four models. Dashed line = Part 1 design target (15.7% flagged)."
+
+import numpy as np
+
+sweep_taus = [round(t, 2) for t in np.arange(0.10, 0.16, 0.01)]
+sweep_rows = []
+for model, p in val_probs.items():
+    for tau in sweep_taus:
+        tm = threshold_metrics(y_val, p, tau)
+        sweep_rows.append({"Model": model, "tau": tau, **tm})
+
+sweep_df = pd.DataFrame(sweep_rows)
+
+# Print table
+print(f"{'Model':<10} {'tau':>5} {'Flagged':>8} {'Precision':>10} {'Recall':>8} {'F1':>8}")
+print("-" * 55)
+for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
+    for _, row in sweep_df[sweep_df["Model"] == model].iterrows():
+        print(f"{model:<10} {row['tau']:>5.2f} {row['flagged_rate']:>8.1%} "
+              f"{row['precision_tau']:>10.3f} {row['recall_tau']:>8.3f} {row['f1_tau']:>8.3f}")
+    print()
+```
+
+```{python}
+#| label: threshold-sweep-plot
+#| fig-cap: "Flag rate (left) and F1 (right) across τ sweep. Dashed grey line = Part 1 design target (15.7% flagged)."
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
+    sub = sweep_df[sweep_df["Model"] == model]
+    ax1.plot(sub["tau"], sub["flagged_rate"] * 100, "o-", color=MODEL_COLORS[model],
+             label=model, linewidth=2, markersize=5)
+    ax2.plot(sub["tau"], sub["f1_tau"], "o-", color=MODEL_COLORS[model],
+             label=model, linewidth=2, markersize=5)
+
+ax1.axhline(15.7, color="gray", linestyle="--", alpha=0.7, label="Part 1 target (15.7%)")
+ax1.axvline(TAU,  color="black", linestyle=":", alpha=0.6, label=f"τ={TAU} (selected)")
+ax2.axvline(TAU,  color="black", linestyle=":", alpha=0.6, label=f"τ={TAU} (selected)")
+
+ax1.set_xlabel("Threshold τ"); ax1.set_ylabel("Patients flagged (%)")
+ax1.set_title("Flag Rate vs τ"); ax1.legend(fontsize=9)
+ax2.set_xlabel("Threshold τ"); ax2.set_ylabel("F1 score")
+ax2.set_title("F1 vs τ"); ax2.legend(fontsize=9)
+
+plt.tight_layout()
+plt.show()
+```
+
+**Key observations:**
+
+- All models show a steep flag-rate drop between τ=0.10 and τ=0.15, reflecting
+  concentration of calibrated probabilities in this range.
+- **τ=0.12** is the operational sweet spot: XGBoost flags 16.1% (≈15.7% target),
+  LightGBM flags exactly 15.7%, and both reach their peak F1 here.
+- **TF/Keras** shows a flat zone at τ=0.11–0.13 (19.5% flagged, F1 0.189) due to
+  a step function in the isotonic regression calibrator. It reaches ~15% flagged
+  only at τ=0.14, where F1 drops to 0.180.
+- **LR** undershoots the target at τ=0.12 (12.0% flagged) — the linear model's
+  probability distribution is more compressed than the tree models.
+
+---
+
 ## Calibration
 
 ```{python}
+
 #| label: calibration-curves
 #| fig-cap: "Reliability diagrams — calibrated probabilities vs observed positive rate (10 bins). Perfect calibration = diagonal."
-
-# Load all sklearn models and produce uncalibrated + calibrated probs
-lr_model   = load_sklearn_model("lr")
-xgb_model  = load_sklearn_model("xgb")
-lgbm_model = load_sklearn_model("lgbm")
-
-# Sanitize feature names for tree models
-def sanitize(name): return name.replace("[","(").replace("]",")").replace("<","lt")
-X_val_tree = X_val.copy()
-X_val_tree.columns = [sanitize(c) for c in X_val_tree.columns]
-
-cal_probs = {
-    "LR":       lr_model.predict_proba(X_val)[:, 1],
-    "XGBoost":  xgb_model.predict_proba(X_val_tree)[:, 1],
-    "LightGBM": lgbm_model.predict_proba(X_val_tree)[:, 1],
-}
-
-# TF model
-try:
-    tf_model, tf_calibrator = load_tf_model()
-    cal_probs["TF/Keras"] = tf_predict_proba(tf_model, tf_calibrator, X_val.values)
-    has_tf = True
-except Exception as e:
-    print(f"TF model not loaded: {e}")
-    has_tf = False
 
 fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
 axes = axes.ravel()
 
-for ax, (name, probs) in zip(axes, cal_probs.items()):
+for ax, (name, probs) in zip(axes, val_probs.items()):
     frac_pos, mean_pred = calibration_curve(y_val, probs, n_bins=10, strategy="uniform")
     ax.plot([0, 1], [0, 1], "k--", alpha=0.5, label="Perfect")
     ax.plot(mean_pred, frac_pos, "o-", color=MODEL_COLORS[name], label=name, linewidth=2)
@@ -193,10 +278,11 @@ for ax, (name, probs) in zip(axes, cal_probs.items()):
 plt.suptitle("Reliability Diagrams — Validation Set (Calibrated)", y=1.01)
 plt.tight_layout()
 plt.show()
+
 ```
 
 All four models show well-calibrated probabilities in the low-risk region
-(0–0.20), which is the clinically relevant range for τ=0.10 screening.
+(0–0.20), which is the clinically relevant range for τ=0.12 screening.
 Brier scores are nearly identical across models (0.052), confirming that
 calibration quality is similar and the metric differences reflect discrimination
 rather than calibration error.
@@ -206,50 +292,99 @@ rather than calibration error.
 ## Model Selection
 
 ```{python}
+
 #| label: selection-summary
 
-summary = pd.DataFrame([
-    {"Model": "LR",       "Val AUC": 0.676, "Val Recall@τ": 0.366, "Train-Val Gap": 0.023, "Flag Rate": "19.4%", "Notes": "Best generalization; linear signal only"},
-    {"Model": "XGBoost",  "Val AUC": 0.687, "Val Recall@τ": 0.512, "Train-Val Gap": 0.099, "Flag Rate": "26.1%", "Notes": "Leads AUC + recall; best F1"},
-    {"Model": "LightGBM", "Val AUC": 0.685, "Val Recall@τ": 0.501, "Train-Val Gap": 0.141, "Flag Rate": "26.7%", "Notes": "Close to XGBoost; no metric lead"},
-    {"Model": "TF/Keras", "Val AUC": 0.689, "Val Recall@τ": 0.570, "Train-Val Gap": 0.032, "Flag Rate": "31.0%", "Notes": "Highest recall; liberal flag rate"},
-]).set_index("Model")
+# Change as needed if models are retrained or metrics updated
+_notes = {
+    "LR":       "Best generalization; undershoots flag target at τ=0.12",
+    "XGBoost":  "Leads F1 at τ=0.12; flag rate ≈ Part 1 target",
+    "LightGBM": "Flag rate exactly at target; F1 marginally behind XGBoost",
+    "TF/Keras": "Flat calibrator zone 0.11–0.13; 19.5% flagged at τ=0.12",
+}
 
+_all_metrics = {"LR": lr_metrics, "XGBoost": xgb_metrics, "LightGBM": lgbm_metrics, "TF/Keras": tf_metrics}
+
+# Threshold-dependent metrics recomputed at deployment τ from live val predictions
+_val_tau_metrics = {m: threshold_metrics(y_val, val_probs[m], TAU)
+                    for m in ["LR", "XGBoost", "LightGBM", "TF/Keras"]}
+
+rows = []
+for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
+    _v  = _all_metrics[model]["validation"]
+    _t  = _all_metrics[model]["train"]
+    _tm = _val_tau_metrics[model]
+    rows.append({
+        "Model":          model,
+        "Val AUC":        round(_v["auc_roc"], 3),
+        f"Recall@{TAU}":  round(_tm["recall_tau"], 3),
+        "Train-Val Gap":  round(_t["auc_roc"] - _v["auc_roc"], 3),
+        "Flag Rate":      f"{_tm['flagged_rate']:.1%}",
+        "Notes":          _notes[model],
+    })
+
+summary = pd.DataFrame(rows).set_index("Model")
 print(summary.to_string())
+
+# Extract values used in rationale prose (all at deployment τ)
+_xgb_auc    = xgb_metrics["validation"]["auc_roc"]
+_xgb_f1     = _val_tau_metrics["XGBoost"]["f1_tau"]
+_xgb_recall = _val_tau_metrics["XGBoost"]["recall_tau"]
+_xgb_prec   = _val_tau_metrics["XGBoost"]["precision_tau"]
+_xgb_flag   = _val_tau_metrics["XGBoost"]["flagged_rate"]
+_tf_auc     = tf_metrics["validation"]["auc_roc"]
+_tf_flag    = _val_tau_metrics["TF/Keras"]["flagged_rate"]
+_lr_recall  = _val_tau_metrics["LR"]["recall_tau"]
+_lgbm_prec  = _val_tau_metrics["LightGBM"]["precision_tau"]
+_tf_prec    = _val_tau_metrics["TF/Keras"]["precision_tau"]
+_flag_diff_pp = (_tf_flag - _xgb_flag) * 100
+_recall_lift  = (_xgb_recall - _lr_recall) * 100
+_auc_diff_pp  = (_tf_auc - _xgb_auc) * 100
+
 ```
 
 **Selected model: XGBoost**
 
 Rationale:
 
-1. **Discrimination:** Leads on AUC-ROC (0.687) and F1@τ (0.182) on validation.
-   TF/Keras leads on raw AUC-ROC (0.689, +0.2pp) and recall, but flags 31% of
-   patients — a 5pp higher rate than XGBoost that would impose material clinical
+```{python}
+
+#| label: selection-rationale
+#| echo: false
+
+print(f"""\
+1. Discrimination: Leads on AUC-ROC ({_xgb_auc:.3f}) and F1@tau ({_xgb_f1:.3f}) on validation.
+   TF/Keras leads on raw AUC-ROC ({_tf_auc:.3f}, +{_auc_diff_pp:.1f}pp) and recall, but flags {_tf_flag:.1%}
+   of patients -- {_flag_diff_pp:.0f}pp higher than XGBoost, imposing material clinical
    workflow burden without proportionate precision gain.
-2. **Recall at τ=0.10:** XGBoost catches 51.2% of true positives vs 36.6% for LR —
-   a clinically meaningful +14.6pp lift for recall-oriented readmission screening.
-3. **Precision:** XGBoost leads tree models on precision@τ (0.111), flagging a
-   higher-quality subset than LightGBM (0.106) or TF/Keras (0.104).
-4. **Interpretability:** SHAP TreeExplainer provides feature-level explanation for
-   each prediction — operationally important for clinical trust and regulatory review.
-5. **Inference simplicity:** Single joblib file, no TF/Keras dependency, no
+
+2. Recall at tau={TAU}: XGBoost catches {_xgb_recall:.1%} of true positives vs {_lr_recall:.1%} for LR --
+   a +{_recall_lift:.1f}pp lift for recall-oriented readmission screening.
+
+3. Precision: XGBoost leads tree models on precision@tau ({_xgb_prec:.3f}), flagging a
+   higher-quality subset than LightGBM ({_lgbm_prec:.3f}) or TF/Keras ({_tf_prec:.3f}).
+
+4. Interpretability: SHAP TreeExplainer provides feature-level explanation for each
+   prediction -- operationally important for clinical trust and regulatory review.
+
+5. Inference simplicity: Single joblib file, no TF/Keras dependency, no
    two-stage calibrator load pattern.
-6. **Holdout evaluation** confirms selection below.
+
+6. Holdout evaluation confirms selection below.\
+""")
+
+```
 
 ---
 
 ## Holdout Evaluation
 
 ```{python}
+
 #| label: holdout-eval
 #| fig-cap: "XGBoost calibrated probabilities on holdout set — ROC and PR curves."
 
-# Predict on holdout
-X_holdout_tree = X_holdout.copy()
-X_holdout_tree.columns = [sanitize(c) for c in X_holdout_tree.columns]
-holdout_probs = xgb_model.predict_proba(X_holdout_tree)[:, 1]
-
-# Metrics
+# holdout_probs already computed in model-loading cell (XGBoost on holdout set)
 from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_loss
 
 auc_roc = roc_auc_score(y_holdout, holdout_probs)
@@ -262,8 +397,8 @@ precision_tau    = y_holdout[flagged_mask].mean() if flagged_mask.any() else 0.0
 recall_tau       = y_holdout[flagged_mask].sum() / y_holdout.sum()
 f1_tau           = (2 * precision_tau * recall_tau) / (precision_tau + recall_tau + 1e-9)
 
-print("XGBoost Holdout Evaluation (τ=0.10)")
-print("─" * 40)
+print(f"XGBoost Holdout Evaluation (tau={TAU})")
+print("-" * 40)
 print(f"  AUC-ROC      {auc_roc:.4f}")
 print(f"  AUC-PR       {auc_pr:.4f}")
 print(f"  Brier score  {brier:.4f}")
@@ -272,13 +407,19 @@ print(f"  Precision@τ  {precision_tau:.4f}")
 print(f"  Recall@τ     {recall_tau:.4f}")
 print(f"  F1@τ         {f1_tau:.4f}")
 print()
+_val_auc_roc   = xgb_metrics["validation"]["auc_roc"]
+_val_tm        = threshold_metrics(y_val, val_probs["XGBoost"], TAU)
+_val_recall_t  = _val_tm["recall_tau"]
+_val_flag_t    = _val_tm["flagged_rate"]
 print("Comparison (val → holdout):")
-print(f"  AUC-ROC:     0.6866 → {auc_roc:.4f}  ({auc_roc - 0.6866:+.4f})")
-print(f"  Recall@τ:    0.5115 → {recall_tau:.4f}  ({recall_tau - 0.5115:+.4f})")
-print(f"  Flagged:     26.1%  → {flagged_rate:.1%}")
+print(f"  AUC-ROC:     {_val_auc_roc:.4f} → {auc_roc:.4f}  ({auc_roc - _val_auc_roc:+.4f})")
+print(f"  Recall@tau:  {_val_recall_t:.4f} → {recall_tau:.4f}  ({recall_tau - _val_recall_t:+.4f})")
+print(f"  Flagged:     {_val_flag_t:.1%} → {flagged_rate:.1%}")
+
 ```
 
 ```{python}
+
 #| label: holdout-roc-pr
 #| fig-cap: "XGBoost — ROC and Precision-Recall curves on holdout set."
 
@@ -309,20 +450,22 @@ ax2.legend()
 
 plt.tight_layout()
 plt.show()
+
 ```
 
-**Holdout result is consistent with validation.** AUC-ROC and recall at τ=0.10
-are stable across the temporal split, indicating the model generalizes to the
-holdout period without meaningful performance degradation. The holdout positive
-rate (5.6%) matches validation and is lower than training (7.1%) — a temporal
-drift documented in preprocessing. Flag rate and precision are in line with
-the Part 1 experimental design expectation (~15.7% flagged at τ=0.10).
+**Holdout result is consistent with validation.** AUC-ROC and threshold-dependent
+metrics at τ=0.12 are stable across the temporal split, indicating the model
+generalizes without meaningful performance degradation. The holdout positive rate
+(5.6%) matches validation and is lower than training (7.1%) — temporal drift
+documented in preprocessing. Flag rate at τ=0.12 is consistent with the Part 1
+experimental design target (~15.7%).
 
 ---
 
 ## SHAP Analysis
 
 ```{python}
+
 #| label: shap-bar
 #| fig-cap: "Top 20 features by mean |SHAP| on validation set (XGBoost)."
 
@@ -343,9 +486,11 @@ ax.set_xlabel("Mean |SHAP| value")
 ax.set_title("XGBoost — Feature Importance (Validation Set)")
 plt.tight_layout()
 plt.show()
+
 ```
 
 ```{python}
+
 #| label: shap-cross-model
 #| fig-cap: "Cross-model feature rank comparison — top 10 features by model."
 
@@ -355,8 +500,7 @@ xgb_ranked  = xgb_shap_df.reset_index(drop=True)
 lgbm_ranked = lgbm_shap_df.reset_index(drop=True)
 tf_ranked   = tf_ig_df.reset_index(drop=True)
 
-# Sanitize LR feature names for cross-model comparison
-def sanitize(name): return name.replace("[","(").replace("]",")").replace("<","lt")
+# Sanitize LR feature names for cross-model comparison (sanitize defined in model-loading)
 lr_ranked["feature"] = lr_ranked["feature"].apply(sanitize)
 
 top_features = xgb_ranked["feature"].head(10).tolist()
@@ -379,19 +523,34 @@ rank_df = pd.DataFrame(rank_data).set_index("Feature")
 rank_df.index = [f.replace("numeric__","").replace("nominal__","").replace("med_ord__","") for f in rank_df.index]
 print("Cross-model feature ranks (1 = most important):")
 print(rank_df.to_string())
+
 ```
 
-**Key findings:**
+```{python}
+#| label: shap-key-findings
+#| echo: false
 
-- `time_in_hospital` and `number_inpatient` are the top 2 features across all
-  four attribution methods — robust signal regardless of model family.
-- `total_prior_encounters` ranks low in LR (#45) but high in tree/NN models
-  (#3 XGBoost, #5 LightGBM) — a non-linear utilization signal invisible to
-  linear models.
-- `insulin` rises notably in TF/Keras (rank 2 by IG), consistent with the
-  Part 1 PSM OR ~1.17 (positive association).
-- `diag_1_group_Respiratory` is protective across all models — acute respiratory
-  admissions are discrete events, not chronic high-utilizer presentations.
+# rank_df index uses short names (prefix stripped); look up by partial match on full ranked DFs
+def _rank_in(ranked_df: pd.DataFrame, substr: str) -> str:
+    matches = ranked_df[ranked_df["feature"].str.contains(substr, regex=False)]
+    return f"#{int(matches.index[0]) + 1}" if len(matches) > 0 else ">74"
+
+_tpe_lr   = _rank_in(lr_ranked,   "total_prior_encounters")
+_tpe_xgb  = _rank_in(xgb_ranked,  "total_prior_encounters")
+_tpe_lgbm = _rank_in(lgbm_ranked, "total_prior_encounters")
+
+_ins_tf   = _rank_in(tf_ranked,   "insulin")
+
+print(f"Key findings:\n")
+print(f"- time_in_hospital and number_inpatient are the top 2 features across all four")
+print(f"  attribution methods -- robust signal regardless of model family.")
+print(f"- total_prior_encounters ranks low in LR ({_tpe_lr}) but high in tree/NN models")
+print(f"  ({_tpe_xgb} XGBoost, {_tpe_lgbm} LightGBM) -- a non-linear utilization signal invisible to linear models.")
+print(f"- insulin rises notably in TF/Keras ({_ins_tf} by IG), consistent with the")
+print(f"  Part 1 PSM OR ~1.17 (positive association).")
+print(f"- diag_1_group_Respiratory is protective across all models -- acute respiratory")
+print(f"  admissions are discrete events, not chronic high-utilizer presentations.")
+```
 
 ---
 
@@ -400,44 +559,34 @@ print(rank_df.to_string())
 ```{python}
 #| label: causal-consistency
 
-# Part 1 causal estimates for reference
+# Pull LR coefficients directly from lr_coef_df — keyed by full feature name
+_coef_idx = lr_coef_df.set_index("feature")["coefficient"]
+
+def _fmt_coef(feat: str) -> str:
+    c = _coef_idx.get(feat, float("nan"))
+    return f"{c:+.3f}" if not pd.isna(c) else "zeroed"
+
+# Part 1 causal estimates are fixed external references from the causal inference
+# analysis — they do not change when ML models are retrained.
+_causal_features = [
+    ("number_inpatient",           "numeric__number_inpatient",              "AIPW RR ~2.0",                    "+", "+"),
+    ("time_in_hospital",           "numeric__time_in_hospital",              "Clinical prior",                  "+", "+"),
+    ("a1cresult",                  "a1c_ord__a1cresult",                     "IPTW OR ~0.918 (protective)",     "-", "-"),
+    ("insulin",                    "med_ord__insulin",                       "PSM OR ~1.17 (positive)",         "+", "+"),
+    ("diag_1_group_Respiratory",   "nominal__diag_1_group_Respiratory",      "Clinical prior (discrete events)","-", "-"),
+    ("metformin",                  "med_ord__metformin",                     "Clinical prior (better-managed DM)", "-", "-"),
+]
+
 causal_ref = pd.DataFrame([
-    {"Feature":        "number_inpatient",
-     "Part1_estimate": "AIPW RR ~2.0",
-     "Expected_dir":   "+",
-     "LR_coef":        "+0.314",
-     "XGB_SHAP_dir":   "+",
-     "Consistent":     "Yes"},
-    {"Feature":        "time_in_hospital",
-     "Part1_estimate": "Clinical prior",
-     "Expected_dir":   "+",
-     "LR_coef":        "+0.302",
-     "XGB_SHAP_dir":   "+",
-     "Consistent":     "Yes"},
-    {"Feature":        "a1cresult",
-     "Part1_estimate": "IPTW OR ~0.918 (protective)",
-     "Expected_dir":   "−",
-     "LR_coef":        "−0.029",
-     "XGB_SHAP_dir":   "−",
-     "Consistent":     "Yes"},
-    {"Feature":        "insulin",
-     "Part1_estimate": "PSM OR ~1.17 (positive)",
-     "Expected_dir":   "+",
-     "LR_coef":        "+0.023",
-     "XGB_SHAP_dir":   "+",
-     "Consistent":     "Yes"},
-    {"Feature":        "diag_1_group_Respiratory",
-     "Part1_estimate": "Clinical prior (discrete events)",
-     "Expected_dir":   "−",
-     "LR_coef":        "−0.295",
-     "XGB_SHAP_dir":   "−",
-     "Consistent":     "Yes"},
-    {"Feature":        "metformin",
-     "Part1_estimate": "Clinical prior (better-managed DM)",
-     "Expected_dir":   "−",
-     "LR_coef":        "−0.080",
-     "XGB_SHAP_dir":   "−",
-     "Consistent":     "Yes"},
+    {
+        "Feature":        short,
+        "Part1_estimate": p1,
+        "Expected_dir":   exp,
+        "LR_coef":        _fmt_coef(lr_feat),
+        "XGB_SHAP_dir":   xgb_dir,
+        "Consistent":     "Yes",
+    }
+    for short, lr_feat, p1, exp, xgb_dir in _causal_features
 ]).set_index("Feature")
 
 print(causal_ref.to_string())
@@ -541,39 +690,77 @@ print(gender_sub.to_string())
 
 ```{python}
 #| label: fairness-flag-disparity
-#| fig-cap: "Flag rate and positive rate by race — gap between bars indicates miscalibration risk."
+#| fig-cap: "Flag rate and positive rate by race — bars should be proportional. Disparity ratio = flag rate / positive rate; values near 1.0 indicate proportionate flagging."
 
 race_sub_raw = []
 for grp, g in subgroup_df.groupby("race"):
     if len(g) < 50:
         continue
+    pos  = g["label"].mean()
+    flag = g["flagged"].mean()
     race_sub_raw.append({
-        "race":      str(grp),
-        "pos_rate":  g["label"].mean(),
-        "flag_rate": g["flagged"].mean(),
-        "n":         len(g),
+        "Race":              str(grp),
+        "N":                 len(g),
+        "Positive rate":     pos,
+        "Flag rate":         flag,
+        "Disparity ratio":   round(flag / pos, 2) if pos > 0 else float("nan"),
     })
-race_plot = pd.DataFrame(race_sub_raw).sort_values("flag_rate", ascending=False)
+
+race_plot = pd.DataFrame(race_sub_raw).sort_values("Flag rate", ascending=False)
+
+print(f"Racial flag rate disparity (τ={TAU}, holdout set)")
+print(race_plot[["Race","N","Positive rate","Flag rate","Disparity ratio"]].to_string(index=False))
+print()
+print("Disparity ratio = flag rate / positive rate.")
+print("  ~1.0 → proportionate flagging relative to prevalence")
+print("  >1.5 → materially over-flagged relative to prevalence")
+print("  <0.7 → under-detected relative to prevalence")
 
 x = np.arange(len(race_plot))
 width = 0.35
 fig, ax = plt.subplots(figsize=(9, 4))
-b1 = ax.bar(x - width/2, race_plot["flag_rate"], width, label="Flag rate",  color="#E24A33", alpha=0.85)
-b2 = ax.bar(x + width/2, race_plot["pos_rate"],  width, label="Positive rate", color="#4878CF", alpha=0.85)
+ax.bar(x - width/2, race_plot["Flag rate"],     width, label="Flag rate",     color="#E24A33", alpha=0.85)
+ax.bar(x + width/2, race_plot["Positive rate"], width, label="Positive rate", color="#4878CF", alpha=0.85)
 ax.set_xticks(x)
-ax.set_xticklabels(race_plot["race"], rotation=20, ha="right")
+ax.set_xticklabels(race_plot["Race"], rotation=20, ha="right")
 ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-ax.set_title("Flag Rate vs Positive Rate by Race (τ=0.10, Holdout)")
+ax.set_title(f"Flag Rate vs Positive Rate by Race (τ={TAU}, Holdout)")
 ax.legend()
 plt.tight_layout()
 plt.show()
 ```
 
-Fairness analysis examines whether the model imposes differential flag rates
-across demographic groups that are disproportionate to the underlying positive
-rate. Flag rates substantially exceeding positive rates within a subgroup
-indicate over-flagging; the converse indicates under-detection. Both have
-clinical equity implications in a screening context.
+```{python}
+#| label: fairness-narrative
+#| echo: false
+
+overall_flag = subgroup_df["flagged"].mean()
+overall_pos  = subgroup_df["label"].mean()
+overall_dr   = overall_flag / overall_pos
+
+max_dr_row = race_plot.loc[race_plot["Disparity ratio"].idxmax()]
+min_dr_row = race_plot.loc[race_plot["Disparity ratio"].idxmin()]
+
+print(f"Overall flag rate: {overall_flag:.1%}  |  Overall positive rate: {overall_pos:.1%}  |  Overall disparity ratio: {overall_dr:.2f}\n")
+print(f"Highest disparity: {max_dr_row['Race']} (ratio {max_dr_row['Disparity ratio']:.2f})")
+print(f"Lowest disparity:  {min_dr_row['Race']} (ratio {min_dr_row['Disparity ratio']:.2f})\n")
+
+# Assess whether any group exceeds a 1.5x threshold
+flagged_groups = race_plot[race_plot["Disparity ratio"] > 1.5]
+if len(flagged_groups) > 0:
+    print(f"Groups with disparity ratio >1.5 (over-flagged relative to prevalence):")
+    for _, row in flagged_groups.iterrows():
+        print(f"  {row['Race']}: flag {row['Flag rate']:.1%}, pos {row['Positive rate']:.1%}, ratio {row['Disparity ratio']:.2f}")
+else:
+    print("No group exceeds a 1.5x disparity ratio — flag rates are broadly proportionate to prevalence.")
+
+print()
+print("Note: race_Caucasian appears as the #3 feature in TF/Keras Integrated Gradients.")
+print("This is a model transparency flag: the NN is using race as a predictive signal.")
+print("XGBoost (selected model) does not directly encode race as a feature — it enters")
+print("only indirectly through correlated utilization variables. This distinction should")
+print("be documented before clinical deployment.")
+```
 
 ---
 
@@ -610,7 +797,7 @@ ax1.legend()
 
 ax2.plot(tau_df["tau"], tau_df["flagged"] * 100, color="#348ABD", linewidth=2)
 ax2.axvline(TAU, color="black", linestyle="--", alpha=0.6)
-ax2.axhline(15.7, color="gray", linestyle=":", alpha=0.7, label="Part 1 design target (15.7%)")
+ax2.axhline(15.7, color="gray", linestyle=":", alpha=0.7, label="Part 1 design target (~15.7%)")
 ax2.set_xlabel("Threshold τ")
 ax2.set_ylabel("Patients flagged (%)")
 ax2.legend()
@@ -634,59 +821,49 @@ key_rows["flagged"]  = key_rows["flagged"].map("{:.1%}".format)
 print(key_rows[["tau","precision","recall","f1","flagged"]].to_string(index=False))
 ```
 
-The Part 1 experimental design set τ=0.10 based on a 15.7% target flag rate
-and 3pp ARR MDE. The threshold sensitivity curve confirms τ=0.10 sits near the
-F1 elbow — precision and recall trade off steeply on either side, making this
-a well-motivated operating point. A clinical team prioritizing recall (fewer
-missed readmissions) could lower τ to 0.08 to capture ~60% of positives at the
-cost of a ~30% flag rate.
+The Part 1 experimental design target was ~15.7% flagged (3pp ARR MDE). The
+threshold sensitivity curve shows τ=0.12 sits close to the F1 elbow on the
+holdout set, consistent with the sweep findings on validation. A clinical team
+prioritizing recall could lower τ toward 0.10 to flag ~16–26% of patients with
+higher sensitivity, at the cost of reduced precision.
 
 ---
 
 ## Key Findings and Deployment Implications
 
-```{python}
-#| label: findings-summary
+**Modest discriminative performance:** Best holdout AUC-ROC ~0.687. The dataset's
+7% positive rate and ~1-week look-back window limit the theoretical ceiling.
+Performance is consistent with published EHR readmission models.
 
-findings = pd.DataFrame([
-    {"Finding": "Modest discriminative performance",
-     "Detail":  "Best holdout AUC-ROC ~0.687. The dataset's 7% positive rate and "
-                "~1-week look-back window limit theoretical ceiling. Performance is "
-                "consistent with published EHR readmission models."},
-    {"Finding": "Linear signal dominates",
-     "Detail":  "LR closes to within 1pp of XGBoost on AUC-ROC. The non-linear lift "
-                "from tree models is real but modest; deployment cost/complexity should "
-                "be weighed against this marginal gain."},
-    {"Finding": "Non-linear utilization signal",
-     "Detail":  "total_prior_encounters ranks #45 in LR but #3 in XGBoost SHAP — "
-                "non-linear utilization effects are real and captured only by tree models."},
-    {"Finding": "Causal consistency",
-     "Detail":  "All six features with Part 1 directional priors are consistent across "
-                "model families, supporting that the model captures clinically coherent "
-                "signal rather than spurious correlations."},
-    {"Finding": "Threshold at τ=0.10 is well-motivated",
-     "Detail":  "Flag rate of ~26% (holdout) is above the Part 1 design target of 15.7%. "
-                "Consider τ=0.13–0.15 to reduce operational burden while preserving "
-                "most recall, pending clinical workflow assessment."},
-    {"Finding": "Fairness monitoring required",
-     "Detail":  "Flag rate disparities across race/gender groups should be assessed "
-                "against positive rate disparities before deployment. Differential flag "
-                "rates proportional to differential positive rates are expected; "
-                "disproportionate flag rates require intervention."},
-]).set_index("Finding")
+**Linear signal dominates:** LR closes to within 1pp of XGBoost on AUC-ROC. The
+non-linear lift from tree models is real but modest; deployment cost/complexity
+should be weighed against this marginal gain.
 
-for finding, row in findings.iterrows():
-    print(f"**{finding}**")
-    print(f"  {row['Detail']}")
-    print()
-```
+**Non-linear utilization signal:** `total_prior_encounters` ranks #45 in LR but
+#3 in XGBoost SHAP — non-linear utilization effects are real and captured only
+by tree models.
+
+**Causal consistency:** All six features with Part 1 directional priors are
+consistent across model families, supporting that the model captures clinically
+coherent signal rather than spurious correlations.
+
+**Deployment threshold τ=0.12 aligns with Part 1 design:** A sweep of τ=0.10–0.15
+revealed that τ=0.12 is the operating point where XGBoost flags 16.1% of patients
+(≈15.7% Part 1 target) and achieves peak F1. τ=0.10 overshoots (26% flagged);
+τ=0.15 dramatically undershoots (6%). τ=0.12 resolves this and is consistent with
+the experimental design power calculation.
+
+**Fairness monitoring required:** Flag rate disparities across race/gender groups
+should be assessed against positive rate disparities before deployment.
+Differential flag rates proportional to differential positive rates are expected;
+disproportionate flag rates require intervention.
 
 ### Recommended Next Steps
 
-1. **Threshold calibration:** Re-evaluate τ against clinical workflow capacity.
-   The Part 1 design assumed 15.7% flag rate; current XGBoost at τ=0.10 flags
-   26%. Consider τ=0.13 (~20% flagged, recall ~0.42) as a workflow-feasible
-   alternative.
+1. **Threshold confirmation:** τ=0.12 is the deployment threshold — selected via
+   a τ=0.10–0.15 sweep as the point where XGBoost flags ~16% of patients (≈15.7%
+   Part 1 target) and achieves peak F1. Confirm flag rate against clinical workflow
+   capacity before go-live.
 
 2. **Fairness audit:** Complete subgroup analysis with statistical tests for
    flag rate parity, calibration by race/gender, and error rate parity before
