@@ -1,0 +1,10 @@
+# orchestration/requirements.txt
+# Extra packages installed into the Airflow containers via
+# _PIP_ADDITIONAL_REQUIREMENTS or by extending the base image.
+#
+# The GCP providers enable GoogleCloudStorageOperator and VertexAIOperator
+# for production use; the local DAG uses PythonOperator + subprocess instead.
+
+apache-airflow-providers-google>=10.0.0
+google-cloud-aiplatform>=1.70.0
+google-cloud-storage>=2.18.0
