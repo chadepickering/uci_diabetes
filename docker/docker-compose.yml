@@ -1,0 +1,43 @@
+# docker/docker-compose.yml
+# Local smoke-test for both containers.
+#
+# Usage:
+#   cd uci_diabetes && docker compose -f docker/docker-compose.yml up --build
+#
+# The train container runs the full pipeline (preprocess --dry-run + XGBoost),
+# then exits.  The inference server starts only after training completes and
+# serves on http://localhost:8080.
+#
+# Test inference:
+#   curl -X POST http://localhost:8080/predict \
+#     -H "Content-Type: application/json" \
+#     -d '{"instances": [{"race":"Caucasian","gender":"Male","age_band":"[30-40)","time_in_hospital":3,"num_lab_procedures":40,"num_procedures":1,"num_medications":15,"number_outpatient":0,"number_emergency":0,"number_inpatient":0,"number_diagnoses":9,"age_midpoint":35,"total_prior_encounters":0,"num_med_changes":1,"num_meds_active":10,"insulin":"No","metformin":"Steady","a1cresult":"None","max_glu_serum":"None","admission_type_group":"Emergency","discharge_disposition_id":1,"specialty_group":"Other","diag_1_group":"Circulatory","diag_2_group":"Diabetes","diag_3_group":"Other","change":"No","diabetes_med":"Yes","repaglinide":"No","glimepiride":"No","glipizide":"No","glyburide":"No","pioglitazone":"No","rosiglitazone":"No","age_group":"Adult"}]}'
+
+services:
+  train:
+    build:
+      context: ..
+      dockerfile: docker/train/Dockerfile
+    image: uci-diabetes-train:latest
+    command: ["all", "--dry-run"]
+    volumes:
+      - ../ml/data:/app/ml/data
+    environment:
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
+
+  inference:
+    build:
+      context: ..
+      dockerfile: docker/inference/Dockerfile
+    image: uci-diabetes-inference:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../ml/data:/app/model:ro
+    environment:
+      TAU: "0.12"
+      MODEL_DIR: /app/model
+    depends_on:
+      train:
+        condition: service_completed_successfully
