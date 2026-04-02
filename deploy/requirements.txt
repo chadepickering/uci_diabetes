@@ -1,0 +1,9 @@
+# deploy/requirements.txt — GCP deployment dependencies
+# Install: pip install -r deploy/requirements.txt
+#
+# Can be installed into venv_ml alongside ml/requirements.txt, or in a
+# separate venv if GCP SDK conflicts arise with TF/sklearn versions.
+
+google-cloud-aiplatform>=1.70.0
+google-cloud-storage>=2.18.0
+python-dotenv==1.2.2
