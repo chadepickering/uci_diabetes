@@ -1,12 +1,12 @@
-# UCI Diabetes Readmission — End-to-End ML Portfolio
+# Predicting Diabetes-Related Hospital Readmission — End-to-End ML Pipeline
 
-Predicting 30-day hospital readmission in diabetic inpatients using the UCI 130-US Hospitals dataset (1999–2008). This project covers the full lifecycle from raw data ingestion to a deployed REST inference endpoint with drift monitoring — built as a portfolio demonstration of a production-grade ML stack.
+Predicting 30-day hospital readmission in diabetic inpatients using the UCI 130-US Hospitals dataset (1999–2008). This project covers the full lifecycle from raw data ingestion to a deployed REST inference endpoint with drift monitoring — built as a comprehensive demonstration of a production-grade ML stack.
 
 ---
 
-## The Problem
+## Objective
 
-Unplanned 30-day readmissions in diabetic patients are costly for hospitals and harmful for patients. The goal is to flag high-risk encounters at discharge so care teams can intervene — not to predict with certainty, but to rank risk well enough to focus limited resources. This translates to an AUC-optimised binary classifier with a deployment threshold calibrated for operational flag rates.
+Unplanned 30-day readmissions in diabetic patients are costly for hospitals and harmful for patients. The objective is to flag high-risk encounters at discharge so care teams can intervene; not to predict with certainty, but to rank risk well enough to allocate limited resources wisely. This translates to an AUC-optimised binary classifier with a deployment threshold calibrated for operational flag rates.
 
 ---
 
@@ -26,7 +26,7 @@ Unplanned 30-day readmissions in diabetic patients are costly for hospitals and 
 
 The positive rate drop from train to validation/holdout is a documented temporal artifact: earlier encounters had more aggressive readmission coding. All drift analysis uses the training distribution as reference.
 
-**Note:** PySpark was used for data ingestion rather than pandas for architectural reasons — the pipeline is designed to scale to hospital-system-sized EHR data where distributed processing would be necessary. For datasets of this size, `snowflake-connector-python` with pandas (`write_pandas()`) is a simpler and equally valid alternative. See `ingestion/ingest_to_snowflake.py` for the PySpark implementation.
+**Note:** PySpark was used for data ingestion rather than pandas for architectural reasons: the pipeline is designed to scale to hospital-system-sized EHR data where distributed processing would be necessary. For datasets of this size, `snowflake-connector-python` with pandas (`write_pandas()`) is a simpler and equally valid alternative. See `ingestion/ingest_to_snowflake.py` for the PySpark implementation.
 
 ---
 
@@ -34,11 +34,11 @@ The positive rate drop from train to validation/holdout is a documented temporal
 
 ```
 ├── ingestion/          PySpark ingestion → Snowflake
-├── dbt/                dbt transformations (marts layer)
+├── dbt/                dbt transformations (staging and marts layer)
 ├── ml/
-│   ├── preprocess.py   Snowflake → sklearn ColumnTransformer → parquet splits
-│   ├── sklearn/        XGBoost (primary), logistic regression, LightGBM
-│   └── tensorflow/     Feedforward NN baseline
+│   ├── sklearn/        Logistic regression baseline, XGBoost (ultimately chosen), LightGBM
+│       ├── preprocess.py       Snowflake → sklearn ColumnTransformer → parquet splits
+│   └── tensorflow/     Feedforward NN (MLP)
 ├── monitoring/
 │   └── drift.py        PSI / KS / AUC drift monitoring on holdout batches
 ├── deploy/
@@ -56,7 +56,7 @@ The positive rate drop from train to validation/holdout is a documented temporal
 │   └── docker-compose.yml  Local Airflow via Docker Compose
 ├── reports/
 │   ├── part1/          R/Quarto statistical analysis book
-│   └── part2/          Python/Quarto ML evaluation book
+│   └── part2/          Python/Quarto ML evaluation/monitoring book
 └── docs/               Rendered HTML output (GitHub Pages)
 ```
 
@@ -71,7 +71,7 @@ Stack: **R 4.3 · Quarto · RJDBC (Snowflake)**
 Demographics, utilisation patterns, missingness, near-zero-variance features, and correlation structure across 55 candidate features. Identified 11 NZV medication columns for removal and documented the expected temporal positive-rate shift between training and holdout.
 
 ### Chapter 2 — Causal Inference
-Three complementary estimators — IPTW, AIPW, and Propensity Score Matching — to estimate the causal effect of `number_inpatient` visits and HbA1c testing on 30-day readmission risk. Key findings:
+Three complementary estimators — IPTW, AIPW, and Propensity Score Matching — to estimate the causal effect of `number_inpatient` visits, insulin adjustment, and HbA1c testing on 30-day readmission risk. Key findings:
 
 - Prior inpatient visits: AIPW risk ratio ~2.0 (strong positive causal effect)
 - HbA1c testing: IPTW OR ~0.918 (modest protective effect)
@@ -80,14 +80,14 @@ Three complementary estimators — IPTW, AIPW, and Propensity Score Matching —
 These directional expectations serve as a SHAP consistency check in Part 2.
 
 ### Chapter 3 — Experimental Design
-Power analysis and sequential trial design for a prospective A/B test of the deployed model's intervention effect. Designed for 3,048 total encounters (1,524/arm) using O'Brien-Fleming group sequential boundaries at 4 interim analyses, targeting 80% power to detect a 2.5pp reduction in readmission rate.
+Power analysis and sequential trial design for a prospective A/B test of the deployed model's intervention effect. Designed for an average of 2,505 total encounters (half per arm) using O'Brien-Fleming group sequential boundaries at 3 interim analyses (3,048 using fixed design), targeting 80% power to detect a 3pp reduction in readmission rate.
 
 ---
 
 ## Part 2 — ML Pipeline and Deployment
 
 Rendered book: `docs/part2/`
-Stack: **Python · XGBoost · scikit-learn · Vertex AI · Docker · Airflow**
+Stack: **Python · Logistic regression · XGBoost · LightGBM · Multi-layer perceptron · scikit-learn · TensorFlow · Vertex AI · Docker · Airflow**
 
 ### Preprocessing
 
@@ -108,9 +108,9 @@ XGBoost tuned via Optuna (100 trials on validation AUC). Calibrated with Platt s
 | AUC-ROC | 0.687 |
 | AUC-PR | 0.113 |
 | Brier score | 0.052 |
-| Flag rate at τ=0.12 | ~15% |
-| Precision at τ=0.12 | 11.1% |
-| Recall at τ=0.12 | 51.1% |
+| Flag rate at τ=0.12 | 16.1% |
+| Precision at τ=0.12 | 12.4% |
+| Recall at τ=0.12 | 35.4% |
 
 SHAP analysis confirmed directional consistency with Part 1 causal estimates: `number_inpatient`, `num_medications`, and `time_in_hospital` are the top contributors, all with expected sign.
 
@@ -156,7 +156,7 @@ See [deploy/DEPLOYMENT_LESSONS.md](deploy/DEPLOYMENT_LESSONS.md) for six deploym
 
 ## Orchestration
 
-Local Airflow (2.10, LocalExecutor) via `orchestration/docker-compose.yml`. The DAG runs monthly and covers:
+Local Airflow (2.10, LocalExecutor) via `orchestration/docker-compose.yml`. The DAG would run monthly and covers:
 
 ```
 preprocess → train_xgb → upload_gcs → vertex_register → vertex_deploy → drift_monitor
