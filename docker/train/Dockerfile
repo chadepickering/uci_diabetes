@@ -2,14 +2,14 @@
 # Training container — preprocessing + model training for all four models.
 # Includes Snowflake connector for live data pulls; use --dry-run to skip.
 #
-# Build (from repo root): docker build -t uci-diabetes-train:latest -f docker/train/Dockerfile .
+# Build (from repo root): docker build --platform linux/amd64 -t uci-diabetes-train:latest -f docker/train/Dockerfile .
 # Run (dry-run, XGBoost only):
-#   docker run -v $(pwd)/ml/data:/app/ml/data uci-diabetes-train all --dry-run
-FROM uci-diabetes-base:latest
+#   docker run --platform linux/amd64 -v $(pwd)/ml/data:/app/ml/data uci-diabetes-train all --dry-run
+FROM --platform=linux/amd64 uci-diabetes-base:latest
 
 RUN pip install --no-cache-dir \
     lightgbm==4.6.0 \
-    tensorflow==2.19.0 \
+    tensorflow==2.20.0 \
     optuna==4.8.0 \
     shap==0.47.2 \
     imbalanced-learn==0.14.1 \

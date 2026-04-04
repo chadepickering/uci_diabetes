@@ -79,11 +79,13 @@ def run_batch_predict(n_batches: int = 4, version: str = "v1") -> list[str]:
     aiplatform.init(project=project, location=region)
     gcs_client = storage.Client()
 
-    # Load raw holdout features, sorted by encounter_id for temporal ordering
+    # Load raw holdout features.
+    # Row order in raw_features.parquet reflects encounter_id sort from Snowflake
+    # (the dbt mart ordered by encounter_id before assigning split_group).
+    # Filtering to holdout preserves that temporal order.
     raw     = pd.read_parquet(DATA_DIR / "raw_features.parquet")
     holdout = (
         raw[raw["split_group"] == "holdout"]
-        .sort_values("encounter_id")
         .reset_index(drop=True)
     )
     feature_cols = [c for c in holdout.columns if c not in _DROP_COLS]

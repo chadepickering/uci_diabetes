@@ -2,14 +2,15 @@
 # Lean inference container — FastAPI REST server wrapping the XGBoost model.
 # Implements the Vertex AI custom container prediction interface.
 #
-# Build (from repo root): docker build -t uci-diabetes-inference:latest -f docker/inference/Dockerfile .
+# Build (from repo root): docker build --platform linux/amd64 -t uci-diabetes-inference:latest -f docker/inference/Dockerfile .
 # Run locally:
-#   docker run -p 8080:8080 -v $(pwd)/ml/data:/app/model:ro uci-diabetes-inference
-FROM uci-diabetes-base:latest
+#   docker run --platform linux/amd64 -p 8080:8080 -v $(pwd)/ml/data:/app/model:ro uci-diabetes-inference
+FROM --platform=linux/amd64 uci-diabetes-base:latest
 
 RUN pip install --no-cache-dir \
     fastapi==0.115.0 \
-    "uvicorn[standard]==0.30.0"
+    "uvicorn[standard]==0.30.0" \
+    google-cloud-storage==2.19.0
 
 # Application code
 COPY docker/inference/app.py /app/app.py

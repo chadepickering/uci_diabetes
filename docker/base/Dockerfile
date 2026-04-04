@@ -1,8 +1,8 @@
 # docker/base/Dockerfile
 # Shared base image — core ML stack common to both training and inference.
 #
-# Build: docker build -t uci-diabetes-base:latest docker/base/
-FROM python:3.13-slim
+# Build: docker build --platform linux/amd64 -t uci-diabetes-base:latest docker/base/
+FROM --platform=linux/amd64 python:3.13-slim
 
 WORKDIR /app
 

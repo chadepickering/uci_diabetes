@@ -25,15 +25,20 @@ present, matching the behaviour of ml/sklearn/preprocess.py.
 
 Environment variables
 ---------------------
-MODEL_DIR  : directory containing xgb_model.joblib + preprocessor.joblib
-             Default: /app/model
-TAU        : decision threshold for "flagged" field.  Default: 0.12
-PORT       : server port, set by the Dockerfile.     Default: 8080
+AIP_STORAGE_URI : GCS URI to model artifacts — set automatically by Vertex AI
+                  (e.g. gs://bucket/artifacts/v1).  When set, artifacts are
+                  downloaded from GCS at startup to /tmp/model/.
+MODEL_DIR       : fallback local directory when AIP_STORAGE_URI is not set.
+                  Default: /app/model  (used for local docker-compose testing)
+TAU             : decision threshold for "flagged" field.  Default: 0.12
+PORT            : server port, set by the Dockerfile.     Default: 8080
 """
 
 import logging
 import os
 import pathlib
+import shutil
+import tempfile
 from typing import Any
 
 import joblib
@@ -48,8 +53,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL_DIR = pathlib.Path(os.environ.get("MODEL_DIR", "/app/model"))
 TAU = float(os.environ.get("TAU", "0.12"))
+
+# Vertex AI sets AIP_STORAGE_URI; fall back to MODEL_DIR for local use.
+_AIP_STORAGE_URI = os.environ.get("AIP_STORAGE_URI", "").rstrip("/")
+_LOCAL_MODEL_DIR = pathlib.Path(os.environ.get("MODEL_DIR", "/app/model"))
+
+_ARTIFACTS = ["xgb_model.joblib", "preprocessor.joblib"]
 
 # Columns to drop before preprocessing — mirrors preprocess.py
 _DROP_COLS: set[str] = {
@@ -77,17 +87,41 @@ _model = None
 _preprocessor = None
 
 
+def _download_from_gcs(gcs_uri: str, dest_dir: pathlib.Path) -> None:
+    """Download required artifacts from a GCS URI to a local directory."""
+    from google.cloud import storage  # deferred — not needed for local runs
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    client = storage.Client()
+    bucket_name, _, prefix = gcs_uri.replace("gs://", "").partition("/")
+    bucket = client.bucket(bucket_name)
+    for filename in _ARTIFACTS:
+        blob_name = f"{prefix}/{filename}" if prefix else filename
+        dest_path = dest_dir / filename
+        logger.info("Downloading gs://%s/%s → %s", bucket_name, blob_name, dest_path)
+        bucket.blob(blob_name).download_to_filename(str(dest_path))
+
+
 def _load_artifacts() -> None:
     global _model, _preprocessor
-    model_path = MODEL_DIR / "xgb_model.joblib"
-    prep_path  = MODEL_DIR / "preprocessor.joblib"
+    if _AIP_STORAGE_URI:
+        # Running on Vertex AI — download artifacts from GCS
+        local_dir = pathlib.Path(tempfile.mkdtemp(prefix="model_"))
+        logger.info("AIP_STORAGE_URI=%s  Downloading artifacts…", _AIP_STORAGE_URI)
+        _download_from_gcs(_AIP_STORAGE_URI, local_dir)
+    else:
+        # Local docker-compose / manual testing — load from mounted volume
+        local_dir = _LOCAL_MODEL_DIR
+        logger.info("AIP_STORAGE_URI not set — loading from MODEL_DIR=%s", local_dir)
+
+    model_path = local_dir / "xgb_model.joblib"
+    prep_path  = local_dir / "preprocessor.joblib"
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
     if not prep_path.exists():
         raise FileNotFoundError(f"Preprocessor not found: {prep_path}")
     _model        = joblib.load(model_path)
     _preprocessor = joblib.load(prep_path)
-    logger.info("Artifacts loaded from %s  |  TAU=%.2f", MODEL_DIR, TAU)
+    logger.info("Artifacts loaded from %s  |  TAU=%.2f", local_dir, TAU)
 
 
 # ---------------------------------------------------------------------------

@@ -94,8 +94,7 @@ def compute_drift(n_batches: int = 4) -> list[dict]:
     train   = raw[raw["split_group"] == "train"]
     holdout = (
         raw[raw["split_group"] == "holdout"]
-        .sort_values("encounter_id")
-        .reset_index(drop=True)
+        .reset_index(drop=True)  # row order from Snowflake is already temporal
     )
 
     batch_size = len(holdout) // n_batches
