@@ -7,7 +7,8 @@ jupyter: venv_ml
 
 This chapter evaluates model stability across simulated production traffic. The
 holdout set (13,917 encounters) is divided into four temporal batches representing
-quarterly scoring periods, fed through the deployed model in encounter order.
+semi-annual scoring periods (~6 months each, covering approximately 2007–2008),
+fed through the deployed model in encounter order.
 All metrics use the **training set as the reference distribution** — the same
 baseline the model was built on.
 
@@ -44,7 +45,8 @@ N_BATCHES = len(df_drift)
 ## Batch Summary
 
 The holdout set is ordered by encounter index (reflecting the temporal encounter_id
-sort from the Snowflake mart) and divided into four equal-sized quarterly batches.
+sort from the Snowflake mart) and divided into four equal-sized semi-annual batches
+(~3,479 encounters each, representing ~6-month windows across 2007–2008).
 
 ```{python}
 #| label: batch-summary
@@ -57,7 +59,7 @@ summary.columns = [
     "Batch", "N", "AUC-ROC", "Flag Rate", "Pos Rate",
     "KS Stat", "KS p-val", "Mean PSI", "Alert"
 ]
-summary["Batch"] = summary["Batch"].apply(lambda x: f"Q{x}")
+summary["Batch"] = summary["Batch"].apply(lambda x: f"P{x}")
 summary["Alert"] = summary["Alert"].map({True: "⚠", False: "✓"})
 summary.set_index("Batch", inplace=True)
 summary.style \
@@ -86,7 +88,7 @@ summary.style \
 #| fig-cap: "AUC-ROC and flag rate across temporal batches. Dashed lines show the validation reference."
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
-quarters = [f"Q{r['batch']}" for r in drift_results]
+quarters = [f"P{r['batch']}" for r in drift_results]
 aucs      = [r["auc_roc"]   for r in drift_results]
 flagrates = [r["flag_rate"] for r in drift_results]
 posrates  = [r["pos_rate"]  for r in drift_results]
@@ -94,7 +96,7 @@ posrates  = [r["pos_rate"]  for r in drift_results]
 # AUC-ROC
 ax1.plot(quarters, aucs, marker="o", color="#2196F3", linewidth=2, markersize=7, label="Holdout batch")
 ax1.axhline(0.6866, color="#9E9E9E", linestyle="--", linewidth=1.2, label="Validation AUC")
-ax1.set_title("AUC-ROC by Quarter", fontweight="bold")
+ax1.set_title("AUC-ROC by Period (~6 mo)", fontweight="bold")
 ax1.set_ylabel("AUC-ROC")
 ax1.set_ylim(0.60, 0.75)
 ax1.legend(fontsize=9)
@@ -218,6 +220,14 @@ PSI is computed on key input features (top SHAP contributors) against the
 training distribution. PSI < 0.10 indicates no significant shift; 0.10–0.20
 moderate; > 0.20 triggers an alert.
 
+The shift in `number_diagnoses` between 1999-2005 (training) and 2007-2008 (holdout) is clinically plausible and historically documented. This period saw significant expansion of ICD-9 coding practices in US hospitals — hospitals increasingly coded more diagnoses per encounter driven by reimbursement incentives under DRG-based payment systems. The observed distributional shift likely reflects coding practice evolution rather than genuine changes in patient comorbidity burden. The coding practice drift in `number_diagnoses` may continue or accelerate beyond the 2008 cutoff of this dataset. In a real deployment this would warrant a retraining trigger note — not because current performance is degraded, but because the feature distribution is on a trajectory that could eventually matter if `number_diagnoses` weight increases with new data.
+
+The decoupling of feature-level drift (`number_diagnoses` PSI=0.318) from prediction-level stability (flag rate and AUC within normal range across all batches) demonstrates that the model's predictive signal is concentrated in stable, high-weight features. This is a desirable property for production deployment.
+
+However, perhaps PSI alerts should be weighted by feature importance. A feature with SHAP rank #5 triggering a monitoring alert while features ranked #1-4 are stable is a low-priority signal. The monitoring framework should distinguish between drift in consequential features vs drift in peripheral features.
+
+
+
 ```{python}
 #| label: psi-heatmap
 #| code-fold: true
@@ -225,7 +235,7 @@ moderate; > 0.20 triggers an alert.
 
 psi_rows = []
 for r in drift_results:
-    row = {"Batch": f"Q{r['batch']}"}
+    row = {"Batch": f"P{r['batch']}"}
     row.update(r["psi_by_feature"])
     psi_rows.append(row)
 
@@ -243,7 +253,7 @@ axes[0].set_xticks(range(len(df_psi.columns)))
 axes[0].set_xticklabels(df_psi.columns, rotation=45, ha="right", fontsize=8)
 axes[0].set_yticks(range(len(df_psi.index)))
 axes[0].set_yticklabels(df_psi.index)
-axes[0].set_title("PSI by Feature & Quarter", fontweight="bold")
+axes[0].set_title("PSI by Feature & Period", fontweight="bold")
 for ri in range(df_psi.shape[0]):
     for ci in range(df_psi.shape[1]):
         v = df_psi.values[ri, ci]
@@ -292,32 +302,31 @@ print(f"Batches evaluated : {N_BATCHES}  (τ = {TAU})")
 print(f"Drift alerts      : {n_alerts} / {N_BATCHES}")
 print(f"Max KS statistic  : {max_ks:.4f}  (threshold 0.10)")
 print(f"Max mean PSI      : {max_psi:.4f}  (threshold 0.20)")
-print(f"AUC-ROC Q1 → Q4  : {auc_q1:.4f} → {auc_q4:.4f}  (Δ {auc_drop:+.4f})")
+print(f"AUC-ROC P1 → P4  : {auc_q1:.4f} → {auc_q4:.4f}  (Δ {auc_drop:+.4f})")
 ```
 
-**No drift alerts triggered** across all four simulated quarters. Key findings:
+**No drift alerts triggered** across all four simulated semi-annual periods. Key findings:
 
 - **Score distribution (KS)**: All batches remain well below the 0.10 alert threshold.
-  KS statistics trend slightly upward from Q1 to Q3 before stabilising in Q4,
+  KS statistics trend slightly upward from P1 to P3 before stabilising in P4,
   reflecting the expected score distribution shift as holdout encounters are
   temporally later than the training period.
 
-- **Input features (PSI)**: Mean PSI ranges 0.04–0.06 across quarters — firmly
-  in the "no significant change" range (< 0.10). The gradual increase from Q1
-  to Q4 is consistent with the temporal split: later encounters naturally diverge
+- **Input features (PSI)**: Mean PSI ranges 0.04–0.06 across periods — firmly
+  in the "no significant change" range (< 0.10). The gradual increase from P1
+  to P4 is consistent with the temporal split: later encounters naturally diverge
   slightly from the 1999–2004 training distribution.
 
-- **AUC-ROC**: Q1 achieves the highest discrimination (0.699), declining modestly
-  through Q2–Q3 before partially recovering in Q4. All values remain within
+- **AUC-ROC**: P1 achieves the highest discrimination (0.699), declining modestly
+  through P2–P3 before partially recovering in P4. All values remain within
   ±0.04 of the validation reference (0.687), indicating that predictive
   performance is stable across the deployment window.
 
-- **Flag rate**: Ranges 13.9%–15.0% across quarters, closely tracking the Part 1
-  design target of 15.7%. The slight upward trend in Q4 is matched by a higher
-  positive rate (6.8% vs ~5% in Q1–Q3), suggesting the model self-corrects to
+- **Flag rate**: Ranges 13.9%–15.0% across periods, closely tracking the Part 1
+  design target of 15.7%. The slight upward trend in P4 is matched by a higher
+  positive rate (6.8% vs ~5% in P1–P3), suggesting the model self-corrects to
   the elevated event frequency rather than blindly over-flagging.
 
 **Production recommendation**: No retraining indicated based on these simulated
-quarterly batches. Monitoring cadence should be maintained; an alert would
+semi-annual batches. Monitoring cadence should be maintained; an alert would
 be triggered if KS > 0.10 or mean PSI > 0.20 in any future scoring window.
-```
