@@ -1,0 +1,82 @@
+[
+  {
+    "batch": 1,
+    "n_rows": 3479,
+    "auc_roc": 0.6985,
+    "flag_rate": 0.1434,
+    "pos_rate": 0.0535,
+    "ks_stat": 0.0312,
+    "ks_pval": 0.0036,
+    "mean_psi": 0.0407,
+    "psi_by_feature": {
+      "number_inpatient": 0.0052,
+      "num_medications": 0.0189,
+      "time_in_hospital": 0.0196,
+      "number_diagnoses": 0.1918,
+      "num_lab_procedures": 0.0381,
+      "number_emergency": 0.0,
+      "age_midpoint": 0.0111
+    },
+    "drift_alert": false
+  },
+  {
+    "batch": 2,
+    "n_rows": 3479,
+    "auc_roc": 0.6604,
+    "flag_rate": 0.1385,
+    "pos_rate": 0.0497,
+    "ks_stat": 0.0316,
+    "ks_pval": 0.0029,
+    "mean_psi": 0.0504,
+    "psi_by_feature": {
+      "number_inpatient": 0.0037,
+      "num_medications": 0.0192,
+      "time_in_hospital": 0.0271,
+      "number_diagnoses": 0.2451,
+      "num_lab_procedures": 0.0485,
+      "number_emergency": 0.0,
+      "age_midpoint": 0.0093
+    },
+    "drift_alert": false
+  },
+  {
+    "batch": 3,
+    "n_rows": 3479,
+    "auc_roc": 0.6639,
+    "flag_rate": 0.1431,
+    "pos_rate": 0.0515,
+    "ks_stat": 0.0515,
+    "ks_pval": 0.0,
+    "mean_psi": 0.0603,
+    "psi_by_feature": {
+      "number_inpatient": 0.0001,
+      "num_medications": 0.0307,
+      "time_in_hospital": 0.0183,
+      "number_diagnoses": 0.3069,
+      "num_lab_procedures": 0.0486,
+      "number_emergency": 0.0,
+      "age_midpoint": 0.0174
+    },
+    "drift_alert": false
+  },
+  {
+    "batch": 4,
+    "n_rows": 3480,
+    "auc_roc": 0.6712,
+    "flag_rate": 0.1497,
+    "pos_rate": 0.0675,
+    "ks_stat": 0.0455,
+    "ks_pval": 0.0,
+    "mean_psi": 0.0626,
+    "psi_by_feature": {
+      "number_inpatient": 0.0003,
+      "num_medications": 0.0251,
+      "time_in_hospital": 0.0309,
+      "number_diagnoses": 0.3181,
+      "num_lab_procedures": 0.0534,
+      "number_emergency": 0.0,
+      "age_midpoint": 0.0102
+    },
+    "drift_alert": false
+  }
+]

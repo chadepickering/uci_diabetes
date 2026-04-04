@@ -108,23 +108,23 @@ def compute_drift(n_batches: int = 4) -> list[dict]:
     print(f"Holdout: {len(holdout):,} rows → {n_batches} batches of ~{batch_size:,}")
     print(f"Training reference: {len(train):,} rows  |  τ = {TAU}\n")
 
-    # Batch 1 probabilities serve as the distribution baseline for KS
-    batch1_probs = _predict(model, preprocessor, batches[0])
+    # Training probabilities — reference distribution for KS and score PSI
+    print("Computing training reference probabilities…")
+    train_probs = _predict(model, preprocessor, train)
 
     results = []
     for i, batch in enumerate(batches):
-        probs  = batch1_probs if i == 0 else _predict(model, preprocessor, batch)
+        probs  = _predict(model, preprocessor, batch)
         labels = batch["readmitted_30day"].values
 
         auc       = float(roc_auc_score(labels, probs)) if labels.sum() > 0 else float("nan")
         flag_rate = float((probs >= TAU).mean())
         pos_rate  = float(labels.mean())
 
-        ks_stat = ks_pval = 0.0
-        if i > 0:
-            ks_stat, ks_pval = stats.ks_2samp(batch1_probs, probs)
+        # KS on predicted probability distribution vs. training reference
+        ks_stat, ks_pval = stats.ks_2samp(train_probs, probs)
 
-        # PSI: each feature vs. training distribution
+        # PSI on raw input features vs. training distribution
         psi_scores: dict[str, float] = {}
         for feat in PSI_FEATURES:
             if feat in batch.columns and feat in train.columns:
@@ -134,7 +134,7 @@ def compute_drift(n_batches: int = 4) -> list[dict]:
                 )
         mean_psi = float(np.mean(list(psi_scores.values()))) if psi_scores else 0.0
 
-        drift_alert = mean_psi > 0.20 or (i > 0 and ks_stat > 0.10)
+        drift_alert = bool(mean_psi > 0.20 or ks_stat > 0.10)
 
         record: dict = {
             "batch":        i + 1,

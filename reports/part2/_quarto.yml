@@ -8,6 +8,7 @@ book:
   chapters:
     - index.qmd
     - 01_model_eval.qmd
+    - 02_drift_monitoring.qmd
 
 execute:
   warning: false
