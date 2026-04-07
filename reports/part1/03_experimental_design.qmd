@@ -254,6 +254,8 @@ primary design threshold, which balances:
 
 Predicted probabilities are generated from a placeholder logistic regression model for illustrative purposes. The threshold analysis will be updated with calibrated predictions from the Part 2 XGBoost and neural network models, which are expected to produce better-discriminating risk scores and more realistic flagging rates.
 
+**Note on pre-specification:** At the time of this design, $\tau = 0.1$ was pre-specified based on EDA findings — producing a 15.7% flag rate and an 11.2% baseline readmission rate among flagged patients. This design remains anchored to that value. In Part 2, model calibration and the precision/recall tradeoff led to a modest upward adjustment to $\tau = 0.12$ for deployment. In a formally registered trial, this change would be documented as a protocol amendment with statistical justification. The experimental design here reflects the pre-specified threshold, not the post-hoc deployment value.
+
 ```{r}
 
 #| label: design-parameters

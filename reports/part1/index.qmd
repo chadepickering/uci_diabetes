@@ -1,4 +1,4 @@
-# Overview
+# Overview {.unnumbered}
 
 This report presents the statistical analysis of the UCI 130-US Hospitals 
 Diabetes dataset, covering exploratory data analysis, causal inference, 

@@ -21,3 +21,4 @@ format:
     toc-depth: 3
     code-fold: true
     code-tools: true
+    css: custom.css

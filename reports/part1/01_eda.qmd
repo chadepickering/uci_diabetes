@@ -97,38 +97,6 @@ miss_summary <- df |>
   mutate(pct_missing = percent(n_missing / nrow(df), accuracy = 0.01)) |>
   arrange(desc(n_missing))
 
-miss_summary |>
-  kable(
-    col.names = c("Variable", "N", "%"),
-    caption = "Variables with Missing Values"
-  ) |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-
-```
-
-```{r}
-
-df |>
-  miss_var_summary() |>
-  filter(n_miss > 0) |>
-  ggplot(aes(x = reorder(variable, pct_miss), y = pct_miss)) +
-  geom_col(fill = "#4E9BB9") +
-  coord_flip() +
-  scale_y_continuous(labels = percent_format(scale = 1)) +
-  labs(
-    title = "Missingness by Variable",
-    subtitle = "Variables with at least one missing value",
-    x = NULL,
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
-        plot.subtitle = element_text(hjust = 0.5, size = 12),
-        axis.text.x = element_text(size = 13),
-        axis.text.y = element_text(size = 13)
-  )
-
 ```
 
 ```{r}

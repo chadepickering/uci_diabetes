@@ -1,4 +1,4 @@
-# Overview
+# Overview {.unnumbered}
 
 This report presents the machine learning evaluation for the UCI 130-US Hospitals
 Diabetes dataset. It covers model development, comparison, selection, holdout
