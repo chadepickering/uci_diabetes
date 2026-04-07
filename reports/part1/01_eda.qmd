@@ -49,6 +49,8 @@ The primary outcome is **30-day hospital readmission** (binary).
 
 ## Outcome Distribution and Class Imbalance
 
+Patients not readmitted within 30 days outnumber those readmitted by a ratio of approximately 13:1, with a 30-day readmission rate of 6.7%.
+
 ```{r}
 
 #| label: outcome-distribution
@@ -86,6 +88,11 @@ ggplot(outcome_counts, aes(x = label, y = n, fill = factor(readmitted_30day))) +
 
 ## Missingness Profile
 
+Missing values for race was likely MCAR — small minority of records with no clear pattern -
+so mode imputation to "Caucasian" was the reasonable, quick approach used in dbt feature engineering.
+There were only three records with missing gender, which is likely a data entry error and were dropped 
+entirely. The remaining missingness is detailed below.
+
 ```{r}
 
 #| label: missingness-table
@@ -102,23 +109,23 @@ miss_summary <- df |>
 ```{r}
 
 missingness_decisions <- tibble::tibble(
-  variable = c("medical_specialty", "race", "diag_3", "diag_2", "gender"),
-  pct_missing = c("48.12%", "2.69%", "1.64%", "0.41%", "0.00%"),
+  variable = c("medical_specialty", "diag_3", "diag_2"),
   mechanism = c(
-    "High missingness — likely MNAR (not documented for certain specialties)",
-    "Likely MCAR — small, no clear pattern",
-    "Structural — not all admissions have tertiary diagnosis",
-    "Structural — not all admissions have secondary diagnosis",
-    "Negligible — 3 records, likely data entry error"
+    "High missingness: likely MNAR (not documented for certain specialties)",
+    "Structural: not all admissions have tertiary diagnosis",
+    "Structural: not all admissions have secondary diagnosis"
   ),
   decision = c(
-    "Retain 'Unknown' as explicit category — already handled in specialty_group",
-    "Mode imputation; may want a more robust approach in Part 2 preprocessing",
-    "Already handled — NULL maps to 'None' in diag_3_group",
-    "Already handled — NULL maps to 'None' in diag_2_group",
-    "Drop 3 records in Part 2 preprocessing — negligible loss"
+    "Retain 'Unknown' as explicit category: already handled in specialty_group",
+    "Already handled: NULL maps to 'None' in diag_3_group",
+    "Already handled: NULL maps to 'None' in diag_2_group"
   )
-)
+) |>
+  dplyr::left_join(
+    miss_summary |> dplyr::select(variable, pct_missing),
+    by = "variable"
+  ) |>
+  dplyr::select(variable, pct_missing, mechanism, decision)
 
 missingness_decisions |>
   kable(
@@ -130,6 +137,8 @@ missingness_decisions |>
 ```
 
 ## Table 1
+
+This frequency table is stratified by the primary outcome of 30-day readmission and includes all candidate predictor variables. Tests for differences between readmission groups and categories of characteristics are shown as well.
 
 ```{r}
 
@@ -272,7 +281,7 @@ tab1_df |>
 Seven variables have zero variance and therefore carry no information. Another six variables 
 have >95% of values in a single category, which may cause modeling issues and should be considered 
 for removal or re-categorization. The table below summarizes these near-zero variance variables.
-Repaglinide and max_glu_serum may be retained for modeling, but the others should not be. We will reassess later.
+Repaglinide and max_glu_serum may be retained for modeling, but the others should not be. This is reassessed later.
 
 ```{r}
 
@@ -323,8 +332,8 @@ vars_to_drop <- c(
 retention_notes <- tibble::tibble(
   variable = c("repaglinide", "max_glu_serum"),
   dominant_pct = c("98.6%", "95.2%"),
-  decision = c("Retain — reassess in Part 2",
-               "Retain — 'None' is clinically meaningful (test not administered)")
+  decision = c("Retain: reassess in Part 2",
+               "Retain: 'None' is clinically meaningful (test not administered)")
 )
 
 retention_notes |>
@@ -369,6 +378,9 @@ df |>
 ```
 
 ## Continuous Variable Distributions
+
+The following is more to evaluate overall distributions of continuous variables and identify any glaring data quality issues than to compare readmission groups, but the plots are colored by readmission status for visual reference.
+
 ```{r}
 
 #| label: continuous-distributions
@@ -407,6 +419,9 @@ df_tab |>
 ## Categorical Variable Profiles
 
 ### Age Distribution
+
+Readmission rates are highest among the oldest age bands, with a notable increase starting around age 60, suggesting age-related factors may be important predictors of readmission risk.
+
 ```{r}
 
 #| label: age-distribution
@@ -437,6 +452,9 @@ df_tab |>
 ```
 
 ### Primary Diagnosis Group
+
+Some mild variation in readmission rates is observed across primary diagnosis groups, but nothing major; circulatory, diabetes, and injury top the list.
+
 ```{r}
 
 #| label: diag1-distribution
@@ -468,6 +486,9 @@ df_tab |>
 ```
 
 ### Admission Type
+
+Admission type distribution is quite similar across readmission groups. A limited number in the newborn category is expected given the exclusion of neonatal admissions, and the "Unknown" category likely reflects data quality issues rather than a clinically meaningful group.
+
 ```{r}
 
 #| label: admission-type-distribution
@@ -498,6 +519,9 @@ df_tab |>
 ```
 
 ### Medication Utilization Profile
+
+Insulin is the most commonly changed medication, and the only one with more than 12% of encounters showing an "Up" or "Down" status. Other medications more commonly are increased rather than decreased, at different rates.
+
 ```{r}
 
 #| label: medication-profile
@@ -529,7 +553,7 @@ df_tab |>
   ) +
   coord_flip() +
   scale_y_continuous(labels = comma) +
-  scale_fill_brewer(palette = "Set2") +
+  scale_fill_manual(values = c("#6a7891ff", "#d66616ff", "#6c349aff")) +
   labs(
     title = "Medication Utilization Profile",
     subtitle = "Encounters where medication was active (excluding No)",
@@ -545,6 +569,8 @@ df_tab |>
 ```
 
 ### HbA1c and Glucose Test Results
+
+Maximum glucose serum and HbA1c result distributions are similar across readmission groups, with the majority of patients having "None" or "Norm" results. However, a slightly higher proportion of patients readmitted within 30 days have elevated glucose levels, suggesting this may be relevant predictors of readmission risk.
 
 ```{r}
 
@@ -595,6 +621,8 @@ p1 + p2 + plot_layout(guides = "collect") &
 
 ### Continuous Variables — Spearman Correlation
 
+Time in hospital, number inpatient, total prior encounters, and number of medications are the most strongly correlated with 30-day readmission among continuous variables, with Spearman correlation coefficients around 0.1. Other moderate to strong correlations are observed among predictors themselves, such as time in hospital with number of medications and number inpatient, which may have implications for multicollinearity in modeling. 
+
 ```{r}
 
 #| label: correlation-heatmap
@@ -629,6 +657,7 @@ corrplot(
   order = "hclust",
   tl.cex = 0.8,
   tl.col = "black",
+  tl.srt = 45,
   addCoef.col = "black",
   number.cex = 0.65,
   col = colorRampPalette(c("#1d617cff", "white", "#891d11ff"))(200),
@@ -639,6 +668,8 @@ corrplot(
 ```
 
 ### Categorical Variables — Cramér's V Association
+
+A few key associations among categorical variables are observed, all logical and validated by literature.
 
 ```{r}
 
@@ -688,17 +719,20 @@ corrplot(
   order = "hclust",
   tl.cex = 0.7,
   tl.col = "black",
+  tl.srt = 45,
   addCoef.col = "black",
   number.cex = 0.45,
   col = colorRampPalette(c("white", "#891d11ff"))(200),
   is.corr = FALSE,
-  title = "Cramér's V Association Matrix, Categorical Variables",
+  title = "Cramer's V Association Matrix, Categorical Variables",
   mar = c(0, 0, 2, 0)
 )
 
 ```
 
 ## Split Group Balance
+
+Despite the slight decline in readmission rates across split groups, demographic and clinical covariates are broadly balanced across train, validation, and holdout sets, supporting the encounter_id-based temporal split as a reasonable proxy for chronological ordering.
 
 ```{r}
 
