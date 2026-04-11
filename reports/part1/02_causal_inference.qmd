@@ -205,7 +205,8 @@ ggplot(df_train, aes(x = ps_hba1c, fill = factor(hba1c_tested))) +
   ) +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top",  
-        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12))
 
 ```
 
