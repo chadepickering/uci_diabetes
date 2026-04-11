@@ -67,7 +67,7 @@ df_train <- df |>
   dplyr::filter(split_group == "train")
 
 cat("Training set N:", nrow(df_train), "\n")
-cat("Outcome rate:", round(mean(df_train$readmitted_30day), 4), "\n")
+cat("Training set readmission <30d rate:", round(mean(df_train$readmitted_30day), 4), "\n")
 
 ```
 
@@ -130,6 +130,8 @@ threat to this assumption and can be addressed via sensitivity analysis.
 
 ### Treatment Definition and Prevalence
 
+HbA1c testing is defined as having a non-"None" value, which indicates that the test was performed and a result was recorded. This is a common approach in the literature using this dataset, as the "None" category likely reflects both lack of testing and missing data. The prevalence of HbA1c testing in the training set is approximately one in six, which provides sufficient treated and control samples for analysis.
+
 ```{r}
 
 #| label: hba1c-treatment
@@ -154,6 +156,8 @@ cat("HbA1c not tested (control):", sum(df_train$hba1c_tested == 0),
 ```
 
 ### Propensity Score Estimation
+
+Propensity scores are estimated using a logistic regression model with the same covariates included in the above DAG as predictors of HbA1c testing. The overlap of propensity score distributions between treated and control groups is assessed visually to ensure sufficient common support for IPTW estimation.
 
 ```{r}
 
@@ -184,12 +188,17 @@ df_train <- df_train |>
 # Check overlap
 ggplot(df_train, aes(x = ps_hba1c, fill = factor(hba1c_tested))) +
   geom_density(alpha = 0.6) +
+  # vertical dashed line at median propensity score for each group
+  geom_vline(data = df_train |> group_by(hba1c_tested) |> summarise(median_ps = median(ps_hba1c)),
+             aes(xintercept = median_ps),
+             linetype = "dashed", size = 1, col = "grey70") +
   scale_fill_manual(
     values = c("#4E9BB9", "#C0392B"),
     labels = c("Not Tested", "Tested")
   ) +
   labs(
-    title = "Propensity Score Overlap — HbA1c Testing",
+    title = "Propensity Score Overlap: HbA1c Testing",
+    subtitle = "Vertical lines indicate median score for each group",
     x = "Estimated Propensity Score",
     y = "Density",
     fill = NULL
@@ -201,6 +210,8 @@ ggplot(df_train, aes(x = ps_hba1c, fill = factor(hba1c_tested))) +
 ```
 
 ### IPTW Weights and Balance Assessment
+
+Weights are, as is standard, calculated using the `weightit` package with the "ps" method and stabilization chosen as a precaution. Balance is assessed using the `cobalt` package, with standardized mean differences (SMD) and Kolmogorov-Smirnov (KS) statistics reported for each covariate before and after weighting. The effective sample sizes for the weighted sample are reported to ensure adequate power for inference. A love plot visualizes the improvement in balance across covariates.
 
 ```{r}
 
@@ -225,6 +236,16 @@ bal_hba1c <- bal.tab(
   un = TRUE
 )
 
+bal_hba1c$Balance |>
+  dplyr::select(-M.Threshold) |>
+  mutate(across(where(is.numeric), ~ round(., 5))) |>
+  kable(
+    col.names = c("Type", "Mean Diff (Unweighted)", "KS Stat (Unweighted)",
+                  "Mean Diff (Weighted)", "KS Stat (Weighted)"),
+    caption = "Covariate Balance Before and After IPTW for HbA1c Testing"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
 love.plot(
   bal_hba1c,
   threshold = 0.1,
@@ -232,7 +253,7 @@ love.plot(
   colors = c("#C0392B", "#4E9BB9"),
   shapes = c("circle", "triangle"),
   size = 3,
-  title = "Covariate Balance Before and After IPTW — HbA1c Testing"
+  title = "Covariate Balance Before and After IPTW: HbA1c Testing"
 )
 
 ```
@@ -295,9 +316,13 @@ Insulin management is a central component of inpatient diabetes care. We
 estimate the Average Treatment Effect on the Treated (ATT) of active insulin 
 dose adjustment (increase or decrease) versus no active change (no insulin or 
 stable dose) using 1:1 nearest-neighbor propensity score matching with a 
-caliper.
+caliper. This binary treatment definition captures the clinical decision to adjust insulin dosing during hospitalization, which may reflect changes in patient condition or provider management strategy.
 
 ### Treatment Definition
+
+Insulin adjustment occurs in nearly one in five patients in the training set, 
+providing sufficient treated and control samples for matching. 
+
 ```{r}
 
 #| label: insulin-treatment
@@ -327,6 +352,10 @@ cat("No active change (control):", sum(df_train$insulin_adjusted == 0),
 ```
 
 ### DAG
+
+Similar to analysis 1, the unobserved confounder (overall disease severity) represents the primary 
+threat to the assumption that insulin adjustment is as-good-as randomly assigned, and can be addressed via sensitivity analysis.
+
 ```{r}
 
 #| label: dag-insulin
@@ -364,6 +393,9 @@ ggdag(dag_insulin, layout = "sugiyama",
 ```
 
 ### Propensity Score Matching
+
+PSM is employed via the `MatchIt` package, using nearest neighbor matching with a caliper of 0.1 to ensure good matches while retaining sufficient sample size. The propensity score model includes the same covariates as the DAG, which are clinically relevant predictors of both insulin adjustment and readmission risk. Balance is assessed post-matching to ensure that the matched sample is well-balanced on observed covariates.
+
 ```{r}
 
 #| label: insulin-psm
@@ -390,11 +422,30 @@ match_insulin <- matchit(
   replace = FALSE
 )
 
-summary(match_insulin, un = FALSE)
+match_summary_obj <- summary(match_insulin, un = FALSE)
+
+match_summary_obj$sum.matched |>
+  as.tibble(rownames = "Covariate") |>
+  mutate(across(where(is.numeric), ~ round(., 5))) |>
+  kable(
+    # col.names = c(),
+    caption = "Covariate Balance Before and After PSM for Insulin Adjustment"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+match_summary_obj$nn |>
+  kable(
+    col.names = c("Group", "N Before Matching", "N After Matching"),
+    caption = "Sample Sizes Before and After PSM for Insulin Adjustment"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 
 ```
 
 ### Balance Assessment
+
+The love plot below shows that all covariates are well-balanced after matching, with standardized mean differences below the 0.1 threshold. This supports the assumption of conditional ignorability for the matched sample and allows for unbiased estimation of the ATT.
+
 ```{r}
 
 #| label: insulin-balance
@@ -406,12 +457,13 @@ love.plot(
   colors = c("#C0392B", "#4E9BB9"),
   shapes = c("circle", "triangle"),
   size = 3,
-  title = "Covariate Balance Before and After PSM — Insulin Adjustment"
+  title = "Covariate Balance Before and After PSM: Insulin Adjustment"
 )
 
 ```
 
 ### Effect Estimation
+
 ```{r}
 
 #| label: insulin-effect
@@ -473,6 +525,8 @@ allows for flexible machine learning models in both components if desired.
 
 ### Treatment Definition
 
+Almost one in four patients in the training set had at least one prior inpatient visit, which provides sufficient treated and control samples for AIPW estimation.
+
 ```{r}
 
 #| label: prior-inpatient-treatment
@@ -488,6 +542,8 @@ cat("No prior inpatient (control):", sum(df_train$prior_inpatient == 0),
 ```
 
 ### DAG
+
+Chronic disease burden is the primary unobserved confounder of the relationship between prior inpatient visits and readmission risk, as it likely influences both the likelihood of having had a prior inpatient visit and the risk of readmission. The observed covariates included in the DAG are proxies for chronic disease burden and other confounders, but they may not fully capture this construct, which is why sensitivity analysis is important for this analysis.
 
 ```{r}
 
@@ -525,6 +581,8 @@ ggdag(dag_prior, layout = "sugiyama",
 
 ### Doubly Robust AIPW Estimation
 
+The doubly robust AIPW estimator is implemented by first estimating the propensity score for having had any prior inpatient visit using a logistic regression model with the same covariates as the DAG. Then, an outcome model is fit using a logistic regression of 30-day readmission on prior inpatient visit and the same covariates. The AIPW estimator combines these two models to estimate the ATE, and bootstrap resampling (n=300) is used to estimate standard errors and confidence intervals. The combination of the two models provides some protection against misspecification, as the estimator is consistent if either the propensity score model or the outcome model is correctly specified.
+
 ```{r}
 
 #| label: prior-inpatient-aipw
@@ -555,7 +613,7 @@ love.plot(
   colors = c("#C0392B", "#4E9BB9"),
   shapes = c("circle", "triangle"),
   size = 3,
-  title = "Covariate Balance Before and After IPTW — Prior Inpatient Visit"
+  title = "Covariate Balance Before and After IPTW: Prior Inpatient Visit"
 )
 
 ```

@@ -114,7 +114,7 @@ Where:
 
 - $Y(0)$ = potential outcome under standard care  
 
-- $\hat{p}$ = predicted readmission probability from Part 2 model
+- $\hat{p}$ = predicted readmission probability from chosen model in Part 2
 
 - $\tau$ = decision threshold (to be specified)
 
@@ -192,7 +192,7 @@ p1 <- ggplot(threshold_summary,
   scale_x_continuous(labels = percent) +
   labs(
     title = "% Patients Flagged by Threshold",
-    x = "Risk Threshold (τ)",
+    x = "Risk Threshold (tau)",
     y = "% Flagged"
   ) +
   theme_minimal(base_size = 12) +
@@ -206,7 +206,7 @@ p2 <- ggplot(threshold_summary,
   scale_x_continuous(labels = percent) +
   labs(
     title = "Baseline Readmission Risk by Threshold",
-    x = "Risk Threshold (τ)",
+    x = "Risk Threshold (tau)",
     y = "Baseline Readmission Rate"
   ) +
   theme_minimal(base_size = 12) +
@@ -229,7 +229,7 @@ threshold_summary |>
     n_flagged = comma(n_flagged)
   ) |>
   kable(
-    col.names = c("Threshold (τ)", "N Flagged", "% Flagged", 
+    col.names = c("Threshold (tau)", "N Flagged", "% Flagged", 
                   "Baseline Readmission Rate"),
     caption = "Enrollment and Baseline Risk by Decision Threshold (Holdout Set)"
   ) |>
@@ -264,7 +264,7 @@ Predicted probabilities are generated from a placeholder logistic regression mod
 selected <- threshold_summary |> 
   dplyr::filter(abs(threshold - 0.1) < 0.001)
 
-cat("Selected threshold (τ):", "10%\n")
+cat("Selected threshold (tau):", "10%\n")
 cat("Estimated % patients flagged:", 
     percent(selected$pct_flagged, accuracy = 0.1), "\n")
 cat("Estimated baseline readmission rate (flagged):", 
@@ -327,6 +327,8 @@ meaningful given the cost of the intervention bundle.
 
 ### Sample Size Requirements
 
+Sample size per arm is computed for a two-sided test of proportions across a range of ARRs, alpha levels, and power levels. The baseline readmission rate of 11.2% among flagged patients is used as the control event rate in these calculations.
+
 ```{r}
 
 #| label: sample-size
@@ -382,6 +384,8 @@ ss_results |>
 
 ### Power Curves
 
+Statistical power is visualized across a range of sample sizes for the primary MDE scenario (ARR = 3pp, alpha = 0.05) and adjacent scenarios to illustrate the tradeoffs between effect size, sample size, and power. The curves show how power increases with sample size for each ARR, with horizontal lines indicating the 80% and 90% power thresholds.
+
 ```{r, fig.height=9}
 
 #| label: power-curves
@@ -422,8 +426,8 @@ ggplot(power_curve_data,
   scale_x_continuous(labels = comma) +
   scale_color_brewer(palette = "Set1") +
   labs(
-    title = "Power Curves by Effect Size (α = 0.05)",
-    subtitle = "Baseline readmission rate = 11.2% among flagged patients (τ = 0.1)",
+    title = "Power Curves by Effect Size (alpha = 0.05)",
+    subtitle = "Baseline readmission rate = 11.2% among flagged patients (tau = 0.1)",
     x = "N per arm",
     y = "Statistical power",
     color = NULL
@@ -462,7 +466,7 @@ years_required <- round(primary_ss$n_per_arm / annual_per_arm, 1)
 
 tibble::tibble(
   Parameter = c(
-    "Selected threshold (τ)",
+    "Selected threshold (tau)",
     "Baseline readmission rate (flagged)",
     "Primary MDE (ARR)",
     "Alpha",
@@ -578,11 +582,15 @@ plot(gs,
      plottype = 1,
      main = "O'Brien-Fleming Stopping Boundaries",
      xlab = "Analysis",
-     ylab = "Z Statistic")
+     ylab = "Z Statistic",
+     # center title
+     cex.main = 1.3)
 
 ```
 
 ### Sample Size and Timing
+
+The following table shows the information fraction, sample size per arm, total sample size, and stopping boundaries for efficacy and futility at each analysis. The boundaries indicate the Z-statistic thresholds for stopping at each analysis — the trial would stop for efficacy if the observed Z exceeds the upper boundary, or for futility if it falls below the lower boundary.
 
 ```{r}
 
@@ -617,6 +625,8 @@ tibble::tibble(
 ```
 
 ### Comparison: Fixed vs Sequential Design
+
+In the proposed group sequential design, the maximum sample size is slightly larger than the fixed sample design (3,137 vs 3,048) due to the alpha spending for interim analyses. However, the expected sample size under the alternative hypothesis is smaller (2,506 vs 3,048) because of the possibility of early stopping for efficacy. The sequential design offers operational advantages by potentially reducing enrollment duration if the intervention effect is larger than the MDE, while controlling Type I error through conservative interim boundaries.
 
 ```{r}
 
@@ -902,7 +912,7 @@ tibble::tibble(
     "Stop for overwhelming efficacy only",
     "Stop for efficacy or advisory futility review",
     "Stop for efficacy or advisory futility review",
-    "Final decision — stop regardless"
+    "Final decision, stop regardless"
   )
 ) |>
   kable(
