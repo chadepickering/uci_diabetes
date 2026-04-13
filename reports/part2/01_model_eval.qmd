@@ -15,10 +15,10 @@ format:
 #| include: false
 
 import sys, pathlib
-repo_root = pathlib.Path().resolve().parents[1]
-sys.path.insert(0, str(repo_root))
+_here = pathlib.Path(__file__).resolve().parent if "__file__" in dir() else pathlib.Path().resolve()
+sys.path.insert(0, str(_here / "py"))
 
-exec(open(repo_root / "reports/part2/py/load_artifacts.py").read())
+from load_artifacts import *  # noqa: F401, F403
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
@@ -30,6 +30,7 @@ from sklearn.metrics import (
     roc_auc_score, average_precision_score, brier_score_loss,
     precision_recall_curve, roc_curve,
 )
+from IPython.display import display, HTML
 
 # ---------------------------------------------------------------------------
 # Shared plot style
@@ -40,7 +41,7 @@ plt.rcParams.update({
     "axes.spines.right": False,
     "axes.grid": True,
     "grid.alpha": 0.3,
-    "font.size": 11,
+    "font.size": 9,
 })
 
 MODEL_COLORS = {
@@ -53,6 +54,7 @@ MODEL_COLORS = {
 ```
 
 ```{python}
+
 #| label: model-loading
 #| include: false
 
@@ -77,6 +79,8 @@ try:
 except Exception as e:
     print(f"TF model not loaded: {e}")
 
+X_train_tree   = X_train.copy();   X_train_tree.columns   = [sanitize(c) for c in X_train_tree.columns]
+train_probs_xgb   = xgb_model.predict_proba(X_train_tree)[:, 1]
 holdout_probs = xgb_model.predict_proba(X_holdout_tree)[:, 1]
 
 def threshold_metrics(y_true, probs, tau):
@@ -88,6 +92,7 @@ def threshold_metrics(y_true, probs, tau):
     rec  = float(y_true[mask].sum() / y_true.sum())
     f1   = 2 * prec * rec / (prec + rec + 1e-9)
     return dict(flagged_rate=float(mask.mean()), precision_tau=prec, recall_tau=rec, f1_tau=f1)
+
 ```
 
 ## Overview
@@ -141,11 +146,20 @@ for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
 disc_df = pd.DataFrame(disc_rows).set_index("Model")
 clin_df = pd.DataFrame(clin_rows).set_index("Model")
 
-print("=== Discrimination & Calibration (threshold-independent) ===")
-print(disc_df.to_string())
-print()
-print(f"=== Clinical Operating Point (τ={TAU}, recomputed from val predictions) ===")
-print(clin_df.to_string())
+display(HTML("<h4>Discrimination &amp; Calibration (threshold-independent)</h4>"))
+display(disc_df.style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .background_gradient(subset=["Val AUC-ROC"], cmap="RdYlGn", vmin=0.65, vmax=0.7)
+    .background_gradient(subset=["Gap"], cmap="RdYlGn_r", vmin=0, vmax=0.15)
+)
+
+display(HTML(f"<h4>Clinical Operating Point (τ={TAU})</h4>"))
+display(clin_df.style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .background_gradient(subset=[f"Precision@{TAU}"], cmap="RdYlGn", vmin=0, vmax=0.50)
+    .background_gradient(subset=[f"Recall@{TAU}"],    cmap="RdYlGn", vmin=0, vmax=0.50)
+    .background_gradient(subset=[f"F1@{TAU}"],        cmap="RdYlGn", vmin=0, vmax=0.50)
+)
 
 ```
 
@@ -154,7 +168,7 @@ print(clin_df.to_string())
 #| label: train-val-gap
 #| fig-cap: "Train–validation AUC-ROC gap by model. Smaller gap = better generalization."
 
-models  = list(val_json.index)
+models  = list(reversed(list(val_json.index)))
 gaps    = [trn_json.loc[m, "auc_roc"] - val_json.loc[m, "auc_roc"] for m in models]
 colors  = [MODEL_COLORS[m] for m in models]
 
@@ -191,6 +205,7 @@ of probability calibration compressing scores toward the positive class base rat
 This sweep identifies the operating point closest to the Part 1 design target.
 
 ```{python}
+
 #| label: threshold-sweep
 #| fig-cap: "Flag rate and F1 across τ=0.10–0.15 for all four models. Dashed line = Part 1 design target (15.7% flagged)."
 
@@ -205,21 +220,31 @@ for model, p in val_probs.items():
 
 sweep_df = pd.DataFrame(sweep_rows)
 
-# Print table
-print(f"{'Model':<10} {'tau':>5} {'Flagged':>8} {'Precision':>10} {'Recall':>8} {'F1':>8}")
-print("-" * 55)
-for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
-    for _, row in sweep_df[sweep_df["Model"] == model].iterrows():
-        print(f"{model:<10} {row['tau']:>5.2f} {row['flagged_rate']:>8.1%} "
-              f"{row['precision_tau']:>10.3f} {row['recall_tau']:>8.3f} {row['f1_tau']:>8.3f}")
-    print()
+from IPython.display import display, HTML
+
+sweep_display = sweep_df.copy()
+sweep_display["flagged_rate"]   = sweep_display["flagged_rate"].map("{:.1%}".format)
+sweep_display["precision_tau"]  = sweep_display["precision_tau"].map("{:.3f}".format)
+sweep_display["recall_tau"]     = sweep_display["recall_tau"].map("{:.3f}".format)
+sweep_display["f1_tau"]         = sweep_display["f1_tau"].map("{:.3f}".format)
+sweep_display["tau"]            = sweep_display["tau"].map("{:.2f}".format)
+display(sweep_display.rename(columns={"tau": "τ", "flagged_rate": "Flagged",
+    "precision_tau": "Precision", "recall_tau": "Recall", "f1_tau": "F1"})
+    .set_index(["Model", "τ"])
+    .style.set_table_attributes('class="table table-striped table-hover"')
+    .background_gradient(subset=["Precision"],        cmap="RdYlGn", vmin=0.1, vmax=0.15)
+    .background_gradient(subset=["Recall"],           cmap="RdYlGn", vmin=0.1, vmax=0.6)
+    .background_gradient(subset=["F1"],               cmap="RdYlGn", vmin=0.1, vmax=0.2)
+)
+
 ```
 
 ```{python}
+
 #| label: threshold-sweep-plot
 #| fig-cap: "Flag rate (left) and F1 (right) across τ sweep. Dashed grey line = Part 1 design target (15.7% flagged)."
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(4.5, 8), sharex=True)
 
 for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
     sub = sweep_df[sweep_df["Model"] == model]
@@ -239,6 +264,7 @@ ax2.set_title("F1 vs τ"); ax2.legend(fontsize=9)
 
 plt.tight_layout()
 plt.show()
+
 ```
 
 **Key observations:**
@@ -324,7 +350,12 @@ for model in ["LR", "XGBoost", "LightGBM", "TF/Keras"]:
     })
 
 summary = pd.DataFrame(rows).set_index("Model")
-print(summary.to_string())
+display(summary.style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .format({"Val AUC": "{:.3f}", f"Recall@{TAU}": "{:.3f}", "Train-Val Gap": "{:.3f}"})
+    .background_gradient(subset=["Val AUC"], cmap="RdYlGn", vmin=0.60, vmax=0.75)
+    .background_gradient(subset=["Train-Val Gap"], cmap="RdYlGn_r", vmin=0, vmax=0.15)
+)
 
 # Extract values used in rationale prose (all at deployment τ)
 _xgb_auc    = xgb_metrics["validation"]["auc_roc"]
@@ -397,24 +428,22 @@ precision_tau    = y_holdout[flagged_mask].mean() if flagged_mask.any() else 0.0
 recall_tau       = y_holdout[flagged_mask].sum() / y_holdout.sum()
 f1_tau           = (2 * precision_tau * recall_tau) / (precision_tau + recall_tau + 1e-9)
 
-print(f"XGBoost Holdout Evaluation (tau={TAU})")
-print("-" * 40)
-print(f"  AUC-ROC      {auc_roc:.4f}")
-print(f"  AUC-PR       {auc_pr:.4f}")
-print(f"  Brier score  {brier:.4f}")
-print(f"  Flagged      {flagged_rate:.1%}  ({flagged_mask.sum():,} of {len(y_holdout):,})")
-print(f"  Precision@τ  {precision_tau:.4f}")
-print(f"  Recall@τ     {recall_tau:.4f}")
-print(f"  F1@τ         {f1_tau:.4f}")
-print()
 _val_auc_roc   = xgb_metrics["validation"]["auc_roc"]
 _val_tm        = threshold_metrics(y_val, val_probs["XGBoost"], TAU)
 _val_recall_t  = _val_tm["recall_tau"]
 _val_flag_t    = _val_tm["flagged_rate"]
-print("Comparison (val → holdout):")
-print(f"  AUC-ROC:     {_val_auc_roc:.4f} → {auc_roc:.4f}  ({auc_roc - _val_auc_roc:+.4f})")
-print(f"  Recall@tau:  {_val_recall_t:.4f} → {recall_tau:.4f}  ({recall_tau - _val_recall_t:+.4f})")
-print(f"  Flagged:     {_val_flag_t:.1%} → {flagged_rate:.1%}")
+
+holdout_summary = pd.DataFrame([
+    {"Metric": "AUC-ROC",      "Holdout": f"{auc_roc:.4f}"},
+    {"Metric": "AUC-PR",       "Holdout": f"{auc_pr:.4f}"},
+    {"Metric": "Brier",        "Holdout": f"{brier:.4f}"},
+    {"Metric": f"Flagged@τ",   "Holdout": f"{flagged_rate:.1%}"},
+    {"Metric": f"Precision@τ", "Holdout": f"{precision_tau:.4f}"},
+    {"Metric": f"Recall@τ",    "Holdout": f"{recall_tau:.4f}"},
+    {"Metric": f"F1@τ",        "Holdout": f"{f1_tau:.4f}"},
+]).set_index("Metric")
+
+display(holdout_summary.style.set_table_attributes('class="table table-striped table-hover"'))
 
 ```
 
@@ -423,30 +452,37 @@ print(f"  Flagged:     {_val_flag_t:.1%} → {flagged_rate:.1%}")
 #| label: holdout-roc-pr
 #| fig-cap: "XGBoost — ROC and Precision-Recall curves on holdout set."
 
-fpr, tpr, _   = roc_curve(y_holdout, holdout_probs)
-prec, rec, _  = precision_recall_curve(y_holdout, holdout_probs)
+from sklearn.metrics import roc_curve, precision_recall_curve, average_precision_score
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+splits = [
+    ("Train",      y_train,   train_probs_xgb, "#727270ff"),
+    ("Validation", y_val,     val_probs["XGBoost"], "#4878CF"),
+    ("Holdout",    y_holdout, holdout_probs, "#E24A33"),
+]
 
-# ROC
-ax1.plot(fpr, tpr, color=MODEL_COLORS["XGBoost"], linewidth=2,
-         label=f"XGBoost (AUC={auc_roc:.3f})")
-ax1.plot([0, 1], [0, 1], "k--", alpha=0.4)
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(4.5, 8))
+
+ax1.plot([0, 1], [0, 1], "k--", alpha=0.3, linewidth=1)
+for label, y, p, color in splits:
+    fpr_, tpr_, _ = roc_curve(y, p)
+    auc_ = roc_auc_score(y, p)
+    ax1.plot(fpr_, tpr_, color=color, linewidth=1.2, label=f"{label} (AUC={auc_:.3f})")
 ax1.set_xlabel("False Positive Rate")
 ax1.set_ylabel("True Positive Rate")
-ax1.set_title("ROC Curve — Holdout")
-ax1.legend()
+ax1.set_title("ROC Curve — XGBoost")
+ax1.legend(fontsize=9)
 
-# PR
+for label, y, p, color in splits:
+    prec_, rec_, _ = precision_recall_curve(y, p)
+    ap_ = average_precision_score(y, p)
+    ax2.plot(rec_, prec_, color=color, linewidth=1.2, label=f"{label} (AP={ap_:.3f})")
 baseline = y_holdout.mean()
-ax2.plot(rec, prec, color=MODEL_COLORS["XGBoost"], linewidth=2,
-         label=f"XGBoost (AP={auc_pr:.3f})")
-ax2.axhline(baseline, color="gray", linestyle="--", alpha=0.6,
-            label=f"Baseline prevalence ({baseline:.3f})")
+ax2.axhline(baseline, color="gray", linestyle="--", alpha=0.5, linewidth=1,
+            label=f"Prevalence ({baseline:.3f})")
 ax2.set_xlabel("Recall")
 ax2.set_ylabel("Precision")
-ax2.set_title("Precision-Recall Curve — Holdout")
-ax2.legend()
+ax2.set_title("Precision-Recall Curve — XGBoost")
+ax2.legend(fontsize=9)
 
 plt.tight_layout()
 plt.show()
@@ -455,7 +491,7 @@ plt.show()
 
 **Holdout result is consistent with validation.** AUC-ROC and threshold-dependent
 metrics at τ=0.12 are stable across the temporal split, indicating the model
-generalizes without meaningful performance degradation. The holdout positive rate
+generalizes without meaningful performance degradation (we've addressed the mild training to validation drift). The holdout positive rate
 (5.6%) matches validation and is lower than training (7.1%) — temporal drift
 documented in preprocessing. Flag rate at τ=0.12 is consistent with the Part 1
 experimental design target (~15.7%).
@@ -463,6 +499,8 @@ experimental design target (~15.7%).
 ---
 
 ## SHAP Analysis
+
+SHAP (SHapley Additive exPlanations) values are computed for the XGBoost model on the validation set using TreeExplainer. The mean absolute SHAP value across samples is used as a global feature importance measure. We see time in hospital, number of inpatient visits, and total prior encounters emerge as the top features, consistent with clinical intuition about readmission risk drivers. The SHAP summary plot (not shown here) confirms that higher values of these features contribute positively to readmission risk.
 
 ```{python}
 
@@ -521,12 +559,20 @@ for label, ranked_df, col in [
 
 rank_df = pd.DataFrame(rank_data).set_index("Feature")
 rank_df.index = [f.replace("numeric__","").replace("nominal__","").replace("med_ord__","") for f in rank_df.index]
-print("Cross-model feature ranks (1 = most important):")
-print(rank_df.to_string())
+rank_df_num = rank_df.replace(">74", 75).astype(int)
+display(HTML("<h5>Cross-model feature ranks (1 = most important)</h5>"))
+display(rank_df_num.style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .background_gradient(subset=["LR"],       cmap="RdYlGn_r", vmin=1, vmax=50)
+    .background_gradient(subset=["XGBoost"],  cmap="RdYlGn_r", vmin=1, vmax=50)
+    .background_gradient(subset=["LightGBM"], cmap="RdYlGn_r", vmin=1, vmax=50)
+    .background_gradient(subset=["TF/Keras"], cmap="RdYlGn_r", vmin=1, vmax=50)
+)
 
 ```
 
 ```{python}
+
 #| label: shap-key-findings
 #| echo: false
 
@@ -550,6 +596,7 @@ print(f"- insulin rises notably in TF/Keras ({_ins_tf} by IG), consistent with t
 print(f"  Part 1 PSM OR ~1.17 (positive association).")
 print(f"- diag_1_group_Respiratory is protective across all models -- acute respiratory")
 print(f"  admissions are discrete events, not chronic high-utilizer presentations.")
+
 ```
 
 ---
@@ -557,6 +604,7 @@ print(f"  admissions are discrete events, not chronic high-utilizer presentation
 ## Causal Consistency Check
 
 ```{python}
+
 #| label: causal-consistency
 
 # Pull LR coefficients directly from lr_coef_df — keyed by full feature name
@@ -589,7 +637,18 @@ causal_ref = pd.DataFrame([
     for short, lr_feat, p1, exp, xgb_dir in _causal_features
 ]).set_index("Feature")
 
-print(causal_ref.to_string())
+def _dir_color(v):
+    if str(v).startswith("+"):
+        return "background-color: #fa8c97ff; color: black"
+    elif str(v).startswith("-"):
+        return "background-color: #8dc7f6ff; color: black"
+    return ""
+
+display(causal_ref.style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .map(_dir_color, subset=["Expected_dir", "LR_coef", "XGB_SHAP_dir"])
+)
+
 ```
 
 All six features with directional priors from Part 1 are consistent across model
@@ -602,6 +661,7 @@ coherent signal, not spurious correlations.
 ## Subgroup Analysis
 
 ```{python}
+
 #| label: subgroup-setup
 
 # Reconstruct subgroup labels from holdout raw features
@@ -632,40 +692,58 @@ def subgroup_metrics(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
         except Exception:
             auc = np.nan
         rows.append({
-            "Group":         str(grp),
-            "N":             len(g),
-            "Pos rate":      f"{pos_rate:.3f}",
-            "Flag rate":     f"{flag_rate:.3f}",
-            "AUC-ROC":       f"{auc:.3f}" if not np.isnan(auc) else "—",
-            "Precision@τ":   f"{prec:.3f}" if not np.isnan(prec) else "—",
-            "Recall@τ":      f"{rec:.3f}" if not np.isnan(rec) else "—",
+            "Group":       str(grp),
+            "N":           len(g),
+            "Pos rate":    round(pos_rate, 3),
+            "Flag rate":   round(flag_rate, 3),
+            "AUC-ROC":     round(auc, 3) if not np.isnan(auc) else np.nan,
+            "Precision@τ": round(prec, 3) if not np.isnan(prec) else np.nan,
+            "Recall@τ":    round(rec, 3) if not np.isnan(rec) else np.nan,
         })
     return pd.DataFrame(rows).set_index("Group")
+
+_SUBGROUP_GRAD_COLS = ["Pos rate", "Flag rate", "AUC-ROC", "Precision@τ", "Recall@τ"]
+_SUBGROUP_FMT       = {c: "{:.3f}" for c in _SUBGROUP_GRAD_COLS}
+
+def _style_subgroup(df):
+    return (df.style
+        .set_table_attributes('class="table table-striped table-hover"')
+        .format(_SUBGROUP_FMT, na_rep="—")
+        .background_gradient(subset=["Pos rate"],    cmap="RdYlGn", vmin=0, vmax=0.15)
+        .background_gradient(subset=["Flag rate"],   cmap="RdYlGn", vmin=0.05, vmax=0.25)
+        .background_gradient(subset=["AUC-ROC"],     cmap="RdYlGn", vmin=0.55, vmax=0.75)
+        .background_gradient(subset=["Precision@τ"], cmap="RdYlGn", vmin=0.05, vmax=0.20)
+        .background_gradient(subset=["Recall@τ"],    cmap="RdYlGn", vmin=0.10, vmax=0.60)
+    )
+
 ```
 
 ```{python}
+
 #| label: subgroup-diagnosis
 #| fig-cap: "AUC-ROC by primary diagnosis group (holdout set, groups with N≥50)."
 
 diag_sub = subgroup_metrics(subgroup_df, "diag_1_group")
-print("=== Subgroup: Primary Diagnosis Group ===")
-print(diag_sub.to_string())
+display(_style_subgroup(diag_sub))
+
 ```
 
 ```{python}
+
 #| label: subgroup-age
 
 age_sub = subgroup_metrics(subgroup_df, "age_band")
-print("=== Subgroup: Age Band ===")
-print(age_sub.to_string())
+display(_style_subgroup(age_sub))
+
 ```
 
 ```{python}
+
 #| label: subgroup-admission
 
 adm_sub = subgroup_metrics(subgroup_df, "admission_type_id")
-print("=== Subgroup: Admission Type ===")
-print(adm_sub.to_string())
+display(_style_subgroup(adm_sub))
+
 ```
 
 ---
@@ -673,22 +751,25 @@ print(adm_sub.to_string())
 ## Fairness Assessment
 
 ```{python}
+
 #| label: fairness-race
 
 race_sub = subgroup_metrics(subgroup_df, "race")
-print("=== Fairness: Race ===")
-print(race_sub.to_string())
+display(_style_subgroup(race_sub))
+
 ```
 
 ```{python}
+
 #| label: fairness-gender
 
 gender_sub = subgroup_metrics(subgroup_df, "gender")
-print("=== Fairness: Gender ===")
-print(gender_sub.to_string())
+display(_style_subgroup(gender_sub))
+
 ```
 
 ```{python}
+
 #| label: fairness-flag-disparity
 #| fig-cap: "Flag rate and positive rate by race — bars should be proportional. Disparity ratio = flag rate / positive rate; values near 1.0 indicate proportionate flagging."
 
@@ -708,13 +789,13 @@ for grp, g in subgroup_df.groupby("race"):
 
 race_plot = pd.DataFrame(race_sub_raw).sort_values("Flag rate", ascending=False)
 
-print(f"Racial flag rate disparity (τ={TAU}, holdout set)")
-print(race_plot[["Race","N","Positive rate","Flag rate","Disparity ratio"]].to_string(index=False))
-print()
-print("Disparity ratio = flag rate / positive rate.")
-print("  ~1.0 → proportionate flagging relative to prevalence")
-print("  >1.5 → materially over-flagged relative to prevalence")
-print("  <0.7 → under-detected relative to prevalence")
+display(race_plot[["Race","N","Positive rate","Flag rate","Disparity ratio"]]
+    .set_index("Race")
+    .style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .background_gradient(subset=["Disparity ratio"], cmap="RdYlGn_r", vmin=0.7, vmax=1.5)
+    .format({"Positive rate": "{:.3f}", "Flag rate": "{:.3f}", "Disparity ratio": "{:.2f}"})
+)
 
 x = np.arange(len(race_plot))
 width = 0.35
@@ -728,9 +809,11 @@ ax.set_title(f"Flag Rate vs Positive Rate by Race (τ={TAU}, Holdout)")
 ax.legend()
 plt.tight_layout()
 plt.show()
+
 ```
 
 ```{python}
+
 #| label: fairness-narrative
 #| echo: false
 
@@ -760,6 +843,7 @@ print("This is a model transparency flag: the NN is using race as a predictive s
 print("XGBoost (selected model) does not directly encode race as a feature — it enters")
 print("only indirectly through correlated utilization variables. This distinction should")
 print("be documented before clinical deployment.")
+
 ```
 
 ---
@@ -767,6 +851,7 @@ print("be documented before clinical deployment.")
 ## Threshold Sensitivity
 
 ```{python}
+
 #| label: threshold-sensitivity
 #| fig-cap: "Precision, recall, and F1 as a function of threshold τ (XGBoost, holdout set)."
 
@@ -789,7 +874,7 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
 
 ax1.plot(tau_df["tau"], tau_df["precision"], label="Precision", color="#4878CF", linewidth=2)
 ax1.plot(tau_df["tau"], tau_df["recall"],    label="Recall",    color="#E24A33", linewidth=2)
-ax1.plot(tau_df["tau"], tau_df["f1"],        label="F1",        color="#988ED5", linewidth=2)
+ax1.plot(tau_df["tau"], tau_df["f1"],        label="F1",        color="#ad32f4ff", linewidth=2)
 ax1.axvline(TAU, color="black", linestyle="--", alpha=0.6, label=f"τ={TAU} (design)")
 ax1.set_ylabel("Score")
 ax1.set_title("Threshold Sensitivity — XGBoost (Holdout)")
@@ -804,21 +889,35 @@ ax2.legend()
 
 plt.tight_layout()
 plt.show()
+
 ```
 
 ```{python}
+
 #| label: threshold-table
+
+import matplotlib.colors as mcolors
+_blue_gold = mcolors.LinearSegmentedColormap.from_list("blue_gold", ["#1565C0", "#dca604ff"])
 
 # Show key operating points
 key_taus = [0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25]
-key_rows = tau_df[tau_df["tau"].apply(lambda t: any(abs(t - k) < 0.005 for k in key_taus))]
-key_rows = key_rows.copy()
-key_rows["tau"]      = key_rows["tau"].map("{:.2f}".format)
-key_rows["precision"]= key_rows["precision"].map("{:.3f}".format)
-key_rows["recall"]   = key_rows["recall"].map("{:.3f}".format)
-key_rows["f1"]       = key_rows["f1"].map("{:.3f}".format)
-key_rows["flagged"]  = key_rows["flagged"].map("{:.1%}".format)
-print(key_rows[["tau","precision","recall","f1","flagged"]].to_string(index=False))
+key_rows = (tau_df[tau_df["tau"].apply(lambda t: any(abs(t - k) < 0.005 for k in key_taus))]
+    .copy()
+    .rename(columns={"tau": "τ", "precision": "Precision", "recall": "Recall",
+                     "f1": "F1", "flagged": "Flagged"})
+    [["τ", "Precision", "Recall", "F1", "Flagged"]]
+    .reset_index(drop=True)
+)
+display(key_rows.style
+    .set_table_attributes('class="table table-striped table-hover"')
+    .format({"τ": "{:.2f}", "Precision": "{:.3f}", "Recall": "{:.3f}",
+             "F1": "{:.3f}", "Flagged": "{:.1%}"})
+    .background_gradient(subset=["Precision"], cmap="RdYlGn",   vmin=0.05, vmax=0.50)
+    .background_gradient(subset=["Recall"],    cmap="RdYlGn",   vmin=0.10, vmax=0.80)
+    .background_gradient(subset=["F1"],        cmap="RdYlGn",   vmin=0, vmax=0.2)
+    .background_gradient(subset=["Flagged"],   cmap=_blue_gold,  vmin=0, vmax=0.7)
+    .hide(axis="index")
+)
 ```
 
 The Part 1 experimental design target was ~15.7% flagged (3pp ARR MDE). The

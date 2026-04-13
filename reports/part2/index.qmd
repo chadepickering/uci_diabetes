@@ -14,32 +14,32 @@ informed feature engineering and modeling choices documented here.
 - **Outcome:** 30-day hospital readmission (binary), 7.1% positive rate
 - **Period:** 1999–2008 across 130 US hospitals
 
-## Data Splits (temporal via encounter_id percentile)
+## Data Splits (temporal via encounter ID percentile)
 
 | Split      | Rows   | Positive rate | Role |
 |---|---|---|---|
 | Train      | 48,706 | 7.1%          | Model fitting and calibration |
 | Validation | 6,958  | 5.6%          | Hyperparameter selection |
-| Holdout    | 13,917 | 5.6%          | Final evaluation (tiebreaker) |
+| Holdout    | 13,917 | 5.6%          | Final evaluation |
 
 ## Modeling Pipeline
 
 Four models were developed and compared:
 
-1. **Logistic Regression** — ElasticNet, Optuna 50 trials, Platt calibration
+1. **Logistic Regression (baseline)** — ElasticNet, Optuna 50 trials, Platt calibration
 2. **XGBoost** — gradient boosted trees, Optuna 100 trials, Platt calibration
 3. **LightGBM** — leaf-wise trees, Optuna 100 trials, Platt calibration
-4. **TF/Keras** — MLP [128→64→32], Optuna 25 trials, isotonic calibration
+4. **NN with TensorFlow/Keras** — MLP [128→64→32], Optuna 25 trials, isotonic calibration
 
 ## Analytical Components
 
 1. **Model Comparison** — train/validation performance across all four models
-2. **Calibration** — reliability diagrams pre and post calibration
+2. **Calibration** — reliability diagrams pre- and post-calibration
 3. **Model Selection** — rationale for productionization choice
-4. **Holdout Evaluation** — honest final metrics on the selected model
+4. **Holdout Evaluation** — final metrics on the selected model
 5. **SHAP Analysis** — feature importance and directionality
 6. **Causal Consistency** — SHAP directions vs Part 1 causal estimates
 7. **Subgroup Analysis** — performance by diagnosis group, age, admission type
 8. **Fairness Assessment** — performance by race and gender
-9. **Threshold Sensitivity** — precision/recall/F1 across τ values
+9. **Threshold Sensitivity** — precision/recall/F1 across tau values
 10. **Deployment Implications** — key findings for clinical deployment

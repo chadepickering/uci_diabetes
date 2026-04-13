@@ -22,12 +22,7 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-# REPO_ROOT is injected by the caller before exec() — fall back to __file__ if available.
-try:
-    REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-except NameError:
-    # Called via exec() — caller must have set `repo_root` in its namespace
-    REPO_ROOT = repo_root  # noqa: F821
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 DATA_DIR  = REPO_ROOT / "ml" / "data"
 ML_DIR    = REPO_ROOT / "ml"
