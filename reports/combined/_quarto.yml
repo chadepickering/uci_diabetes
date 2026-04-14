@@ -1,0 +1,34 @@
+project:
+  type: book
+  output-dir: ../../../chadepickering.github.io/uci-diabetes
+
+book:
+  title: "UCI Diabetes 30-Day Readmission: A Full-Stack Analytical Case Study"
+  author: "Chad Pickering"
+  date: "2026"
+  chapters:
+    - index.qmd
+    - part: "Part 1 — Statistical Analysis"
+      chapters:
+        - part1/index.qmd
+        - part1/01_eda.qmd
+        - part1/02_causal_inference.qmd
+        - part1/03_experimental_design.qmd
+    - part: "Part 2 — Machine Learning Evaluation"
+      chapters:
+        - part2/index.qmd
+        - part2/01_model_eval.qmd
+        - part2/02_drift_monitoring.qmd
+
+execute:
+  warning: false
+  message: false
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+    css: custom.css

@@ -1,0 +1,49 @@
+# Preface {.unnumbered}
+
+This case study applies a full-stack analytical pipeline to the UCI 130-US
+Hospitals Diabetes dataset — a longitudinal collection of 101,766 inpatient
+encounters from 130 US hospitals spanning 1999–2008. The outcome of interest
+is **30-day hospital readmission**, a high-cost, partially preventable event
+targeted by the 2010 Hospital Readmissions Reduction Program (HRRP).
+
+The work is organized in two parts:
+
+---
+
+**Part 1 — Statistical Analysis** begins with rigorous exploratory data
+analysis, causal inference (AIPW, IPTW, PSM) to estimate the effect of HbA1c
+testing on readmission, and a prospective experimental design including power
+analysis for a model deployment trial.
+
+**Part 2 — Machine Learning Evaluation** covers the full modeling pipeline:
+four competing classifiers (Logistic Regression, XGBoost, LightGBM, TF/Keras),
+hyperparameter optimization via Optuna, probability calibration, model selection,
+holdout evaluation, SHAP-based interpretability, subgroup and fairness analysis,
+and simulated production drift monitoring.
+
+---
+
+## Dataset
+
+- **Source:** UCI Machine Learning Repository — Diabetes 130-US Hospitals (Strack et al., 2014)
+- **Analytic sample:** 69,584 encounters after deduplication and exclusion criteria
+- **Outcome:** 30-day hospital readmission (binary), ~7% positive rate
+- **Period:** 1999–2008 across 130 US hospitals
+
+## Pipeline Overview
+
+| Stage | Tool | Output |
+|---|---|---|
+| Data ingestion & feature engineering | dbt + Snowflake | `DIABETES_FEATURES` mart |
+| EDA & causal inference | R (tidyverse, MatchIt, WeightIt) | Part 1 chapters |
+| Experimental design | R (pwr) | Part 1 Chapter 3 |
+| Model training & tuning | Python (XGBoost, LightGBM, TF/Keras, Optuna) | Calibrated `.joblib` / `.keras` artifacts |
+| Evaluation & interpretability | Python (SHAP, scikit-learn) | Part 2 Chapter 1 |
+| Drift monitoring | Python (scipy, PSI) | Part 2 Chapter 2 |
+
+## Selected Results
+
+- **Deployed model:** XGBoost (AUC-ROC 0.687 holdout, calibrated, τ = 0.12)
+- **Flag rate:** ~15% of encounters flagged for intervention
+- **Causal anchor:** HbA1c testing reduces readmission (AIPW RR ~0.92), consistent with SHAP directions
+- **Drift:** No alerts across four simulated semi-annual deployment periods
