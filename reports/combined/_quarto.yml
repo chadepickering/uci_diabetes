@@ -5,7 +5,7 @@ project:
 book:
   title: "UCI Diabetes 30-Day Readmission: A Full-Stack Analytical Case Study"
   author: "Chad Pickering"
-  date: "2026"
+  date: today
   chapters:
     - index.qmd
     - part: "Part 1 — Statistical Analysis"
