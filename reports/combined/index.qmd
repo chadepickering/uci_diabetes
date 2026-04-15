@@ -12,7 +12,7 @@ The work is organized in two parts:
 
 **Part 1 — Statistical Analysis** begins with rigorous exploratory data
 analysis, causal inference (AIPW, IPTW, PSM) to estimate the effect of HbA1c
-testing on readmission, and a prospective experimental design including power
+testing etc. on readmission, and a prospective experimental design including power
 analysis for a model deployment trial.
 
 **Part 2 — Machine Learning Evaluation** covers the full modeling pipeline:
@@ -34,16 +34,25 @@ and simulated production drift monitoring.
 
 | Stage | Tool | Output |
 |---|---|---|
-| Data ingestion & feature engineering | dbt + Snowflake | `DIABETES_FEATURES` mart |
-| EDA & causal inference | R (tidyverse, MatchIt, WeightIt) | Part 1 chapters |
-| Experimental design | R (pwr) | Part 1 Chapter 3 |
-| Model training & tuning | Python (XGBoost, LightGBM, TF/Keras, Optuna) | Calibrated `.joblib` / `.keras` artifacts |
-| Evaluation & interpretability | Python (SHAP, scikit-learn) | Part 2 Chapter 1 |
-| Drift monitoring | Python (scipy, PSI) | Part 2 Chapter 2 |
+| **Raw data ingestion** | PySpark 3.5, Snowflake Spark Connector | Raw encounter table loaded to Snowflake (Google Cloud) |
+| **Data warehousing & transformation** | Snowflake, dbt 1.11.7 | Deduplication, exclusion criteria, and imputation applied in the dbt marts layer |
+| **Feature engineering & preprocessing** | Python, scikit-learn (`ColumnTransformer`, `OrdinalEncoder`, `StandardScaler`, `OneHotEncoder`) | Parquet train/validation/holdout splits + `preprocessor.joblib` to be used in val/holdout to transform raw features |
+| **Exploratory data analysis** | R 4.3.2, tidyverse, kableExtra | Outcome distribution, covariate profiles, missingness analysis, Spearman and Cramer's V correlation matrices, etc. |
+| **Causal inference** | R, WeightIt (AIPW, IPTW), MatchIt (PSM), sandwich estimators | Directional effect estimates for HbA1c, insulin change, and prior utilization; E-value sensitivity analysis |
+| **Experimental design** | R, pwr | Group sequential design (O'Brien-Fleming), power analysis, etc. |
+| **Model training — Logistic Regression** | scikit-learn `LogisticRegression`, Optuna, Elastic Net regularization | `lr_model.joblib` + Platt-calibrated probabilities |
+| **Model training — XGBoost** | XGBoost, Optuna, scikit-learn `CalibratedClassifierCV` | `xgb_model.joblib` + calibrated probabilities; selected for deployment |
+| **Model training — LightGBM** | LightGBM, Optuna, scikit-learn `CalibratedClassifierCV` | `lgbm_model.joblib` + calibrated probabilities |
+| **Model training — Neural Network** | TensorFlow / Keras (multi-layer perceptron with cosine decay and dropout), Optuna, isotonic calibration | `tf_model.keras` + `tf_calibrator.joblib` |
+| **Evaluation & model selection** | scikit-learn (AUC-ROC, AUC-PR, Brier score), matplotlib | Threshold sweep, calibration curves, train–validation gap analysis, holdout evaluation |
+| **Interpretability** | SHAP (`TreeExplainer`, `DeepExplainer`), pandas, matplotlib | Mean \|SHAP\| rankings per model, cross-model directionality comparison, causal consistency check vs previous estimates, etc. |
+| **Subgroup & fairness analysis** | pandas, scikit-learn | AUC-ROC and flag rate stratified by diagnosis group, age band, admission type, race, and gender; disparity ratios, etc. |
+| **Drift monitoring** | Python, scipy, PSI (stability index) | 4-batch semi-annual simulation; KS statistic, PSI by feature, AUC and flag-rate trajectories across deployment periods, etc. |
+| **Reproducible reporting** | Quarto 1.9, R Quarto book, Jupyter kernel, custom CSS | This combined HTML book hosted on GitHub Pages |
 
 ## Selected Results
 
 - **Deployed model:** XGBoost (AUC-ROC 0.687 holdout, calibrated, τ = 0.12)
 - **Flag rate:** ~15% of encounters flagged for intervention
-- **Causal anchor:** HbA1c testing reduces readmission (AIPW RR ~0.92), consistent with SHAP directions
+- **Causal anchor:** HbA1c testing reduces readmission (AIPW RR ~0.92), consistent with SHAP directions and peer-reviewed literature
 - **Drift:** No alerts across four simulated semi-annual deployment periods
